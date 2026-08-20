@@ -1,0 +1,6 @@
+{
+  "adapter": "mongokit",
+  "auth": "better-auth",
+  "tenant": "multi",
+  "typescript": true
+}

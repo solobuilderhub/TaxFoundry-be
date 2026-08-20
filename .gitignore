@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+*.js.map
+*.tsbuildinfo
+
+# Environment — EVERY env file except the committed example.
+# `.env.local` + `.env.*.local` did NOT cover `.env.dev`, which holds
+# BETTER_AUTH_SECRET and GOOGLE_CLIENT_SECRET. Deny by default instead.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
