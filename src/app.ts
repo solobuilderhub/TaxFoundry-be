@@ -73,7 +73,18 @@ export async function createAppInstance(): Promise<FastifyInstance> {
   // MCP endpoint (/api/mcp) — auto-generates one tool per CRUD verb + action on
   // every arc resource, so an AI agent can operate the tax system through the
   // same governed handlers the UI uses. Auth is per-org API keys (see auth.ts).
-  await registerMcpEndpoint(app, { resources, auth: getAuth() });
+  //
+  // Non-fatal: `mcpPlugin` needs `@modelcontextprotocol/sdk`, an OPTIONAL peer
+  // dep of arc. If it's missing or fails to load, the agent surface is gone but
+  // the REST API is fine — so log loudly and keep serving rather than throwing
+  // out of createAppInstance, which index.ts turns into process.exit(1) and a
+  // container restart loop. The dep is declared in package.json; this guard
+  // exists so a future optional-peer gap degrades instead of crash-looping.
+  try {
+    await registerMcpEndpoint(app, { resources, auth: getAuth() });
+  } catch (err) {
+    app.log.error({ err }, 'MCP endpoint failed to mount — /api/mcp unavailable');
+  }
 
   // Alberta Net File transmission. Installed ONLY when an endpoint is
   // configured — absent it, the gateway keeps its 503 stub, so a dev or test
