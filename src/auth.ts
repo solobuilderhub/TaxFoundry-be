@@ -40,12 +40,21 @@ import { apiKey } from '@better-auth/api-key';
 import { defineAuth } from '@spinekit/auth';
 import mongoose from 'mongoose';
 import config from '#config/index.js';
+import { crossSubDomainCookies } from './auth-cookie-domain.js';
 import { authEmail } from './auth-email.js';
 
 // `defineAuth` describes the shape once; `.bind(runtime)` needs no re-describing.
 const authBlueprint = defineAuth({
   session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
   plugins: [
+    // The web app is on a different host than this API, so the session cookie
+    // needs a Domain attribute covering both or it is never sent to the app.
+    // `defineAuth` has no `advanced` passthrough — read auth-cookie-domain.ts
+    // for why this has to be a plugin. Omitted entirely when COOKIE_DOMAIN is
+    // unset: host-only is correct for a single-host deploy and for local dev.
+    ...(config.betterAuth.cookieDomain
+      ? [crossSubDomainCookies(config.betterAuth.cookieDomain)]
+      : []),
     // Long-lived, per-org API keys for MCP / CLI automation. Stored hashed;
     // each key is created with metadata.orgId so a call scopes to ONE org
     // without an extra header. Endpoints under /api/auth/api-key/*.
@@ -81,7 +90,7 @@ export function getAuth(): any {
     _auth = authBlueprint.bind({
       mongoose,
       secret: config.betterAuth.secret,
-      baseURL: process.env.BETTER_AUTH_URL || `http://localhost:${config.server.port}`,
+      baseURL: config.betterAuth.url || `http://localhost:${config.server.port}`,
       frontendUrl: config.frontend.url,
       corsOrigins: config.cors.origins,
       email: authEmail,
