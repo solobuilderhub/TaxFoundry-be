@@ -137,14 +137,20 @@ describe('the rendered payload carries them through', () => {
         ],
       },
     });
+    // 110 = 8%×400,000 = 32,000; 112 = 12%×150,000 (increment over the 250,000
+    // base) = 18,000; sum 50,000 × 0.95 (the line-128 reduction factor for
+    // $12M taxable capital) = 47,500 — NOT 50,000. The grind applies to the
+    // CREDIT, not the $4M expenditure limit (see ca-tax's `schedule29-ieg.ts`
+    // and CHANGELOG 0.0.2); this expectation was stale against the fix until
+    // apps/server actually installed a build carrying it.
     const grant = out.fields.find((f) => f.line === 'innovationEmploymentGrant')?.value;
-    expect(grant).toBe(50_000);
+    expect(grant).toBe(47_500);
 
     const xml = renderAt1NetFile(
       filingData({ innovationEmploymentGrant: grant as number }),
       out.schedulePayloads ?? [],
     );
-    expect(xml).toContain('<Value LineItemID="000129001">50000</Value>');
+    expect(xml).toContain('<Value LineItemID="000129001">47500</Value>');
     expect(filedSchedules(xml)).toContain('029');
   });
 });

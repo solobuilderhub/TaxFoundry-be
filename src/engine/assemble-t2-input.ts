@@ -96,6 +96,10 @@ function scheduleSix(ri: Ri) {
       proceeds: num(d.proceeds),
       acb: num(d.acb),
       outlays: num(d.outlays),
+      // Federal Schedule 6 doesn't use this — it's carried through so an AT1
+      // engagement can bucket the same dispositions into Alberta Schedule
+      // 18's six category totals without a second data-entry pass.
+      ...(d.category ? { category: d.category } : {}),
     }));
   return dispositions.length ? { capitalDispositions: dispositions } : {};
 }

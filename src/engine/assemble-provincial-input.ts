@@ -12,7 +12,15 @@
  * SBD eligibility, a shared provincial business limit) come from the structured
  * working return's `quebec` slice. Fail-closed: absent eligibility ⇒ general rate.
  */
-import { computeFederalT2, type FederalT2Input } from '@classytic/ca-tax/t2';
+import {
+  AB_TAX_RATE_BOOK,
+  computeAllocationFactor,
+  computeFederalT2,
+  type FederalT2Input,
+  resolveAlbertaTaxRates,
+  SINGLE_JURISDICTION_ALBERTA_FACTOR,
+} from '@classytic/ca-tax/t2';
+import { assembleAt1Schedules } from './assemble-at1-schedules.js';
 
 type Ri = Record<string, any>;
 
@@ -67,11 +75,32 @@ export function assembleProvincialInput(
 
   if (program === 'AT1') {
     const allocation = albertaAllocationFrom(pes);
+    const allocationFactor = allocation
+      ? computeAllocationFactor(allocation)
+      : SINGLE_JURISDICTION_ALBERTA_FACTOR;
+    const albertaTaxableIncome = Math.round(allocationFactor * federalTaxableIncome);
+
+    // `period.end` is already a real `Date` by this point — `at1Engine.validate`
+    // (downstream) throws otherwise, so every engine input reaching here already
+    // satisfies it.
+    const taxYear: number = period?.end?.getFullYear() ?? new Date().getFullYear();
+    const rates = resolveAlbertaTaxRates(taxYear, AB_TAX_RATE_BOOK);
+
+    const { schedules, ieg } = assembleAt1Schedules(
+      federal,
+      fed,
+      ri,
+      albertaTaxableIncome,
+      rates.BUSINESS_LIMIT,
+    );
+
     return {
       period,
       federalTaxableIncome,
       activeBusinessIncome,
       ...(allocation ? { allocation } : {}),
+      ...(schedules && Object.keys(schedules).length > 0 ? { schedules } : {}),
+      ...(ieg ? { ieg } : {}),
     };
   }
 
