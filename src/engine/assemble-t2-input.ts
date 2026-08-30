@@ -82,7 +82,13 @@ function scheduleEight(ri: Ri) {
       immediateExpensing: num(c.immediateExpensing),
       ...(c.aiip ? { aiip: true } : {}),
       ...(c.classEmptied ? { classEmptied: true } : {}),
-      ...(c.claim != null && c.claim !== 0 ? { claim: num(c.claim) } : {}),
+      // An explicit 0 is a real discretionary answer — "claim nothing on this
+      // class federally" — and is NOT the same as leaving the box blank, which
+      // claims the maximum. Alberta's AT1 Schedule 13 exists precisely to file
+      // a class claimed provincially but not federally, so collapsing 0 into
+      // blank made that case impossible to state. Blank still arrives as
+      // `undefined` or `''` from the form and still means "maximum".
+      ...(c.claim != null && c.claim !== '' ? { claim: num(c.claim) } : {}),
     }));
   return ccaClasses.length ? { ccaClasses } : {};
 }
@@ -276,15 +282,36 @@ function scheduleTwentyOne(ri: Ri) {
   };
 }
 
-/** Schedule 13 — continuity of reserves (Part 2, other reserves → S1). */
+/**
+ * Schedule 13 — continuity of reserves (Part 2, other reserves → S1).
+ *
+ * `albertaOpening`/`albertaTransfer`/`albertaClosing` have no federal meaning
+ * at all — the federal computation reads only `type`/`opening`/`transfer`/
+ * `closing` — but they ride along on the same row so AT1 Schedule 17
+ * (`assemble-at1-schedules.ts`'s `scheduleSeventeen`) can read its overrides
+ * straight off `fed.reserveContinuity` without a second federal→AT1 lookup.
+ */
 function scheduleThirteen(ri: Ri) {
+  const present = (v: unknown): boolean => v != null && v !== '';
   const rows = (ri.reserves?.rows ?? [])
-    .filter((r: Ri) => r?.type || r?.opening || r?.transfer || r?.closing)
+    .filter(
+      (r: Ri) =>
+        r?.type ||
+        r?.opening ||
+        r?.transfer ||
+        r?.closing ||
+        present(r?.albertaOpening) ||
+        present(r?.albertaTransfer) ||
+        present(r?.albertaClosing),
+    )
     .map((r: Ri) => ({
       type: r.type,
       opening: num(r.opening),
       transfer: num(r.transfer),
       closing: num(r.closing),
+      ...(present(r.albertaOpening) ? { albertaOpening: num(r.albertaOpening) } : {}),
+      ...(present(r.albertaTransfer) ? { albertaTransfer: num(r.albertaTransfer) } : {}),
+      ...(present(r.albertaClosing) ? { albertaClosing: num(r.albertaClosing) } : {}),
     }));
   return rows.length ? { reserveContinuity: rows } : {};
 }

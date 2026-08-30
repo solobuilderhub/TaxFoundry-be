@@ -15,6 +15,22 @@ const engagementYearSchema = new mongoose.Schema(
     taxYearEnd: { type: Date, required: true },
     firstReturn: { type: Boolean, default: false },
     status: { type: String, enum: ENGAGEMENT_STATUSES, default: 'draft', index: true },
+
+    // Amended-return filing (TRA AT1 spec §3.3.6.1, EDI071/EDI073). Presence of
+    // `amendsEngagementYearId` IS the amendment flag — a second boolean would be
+    // a second source of truth for the same fact. Validated at Net File
+    // preparation time (same client/program/tax-year-end as the target), not
+    // here: a relational check belongs where it is enforced, not duplicated at
+    // every write path.
+    amendsEngagementYearId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'EngagementYear',
+      default: null,
+      index: true,
+    },
+    // EDI073 — mandatory once amendsEngagementYearId is set; the engine refuses
+    // to file an amended return without it (assertAt1MandatoryComplete).
+    amendmentDescription: { type: String, default: null },
     // Pinned at compute time; a prior-year recompute must reuse its historical
     // engine version — never recompute a 2024 return with 2026 rules.
     engineVersion: { type: String, default: null },

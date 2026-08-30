@@ -21,7 +21,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { assertAt1MandatoryComplete, At1MandatoryFieldMissingError } from '@classytic/ca-tax/t2';
-import { composeAt1FilingData, type ComposeSources } from '../src/engine/at1-netfile.service.js';
+import {
+  assertValidAmendmentTarget,
+  composeAt1FilingData,
+  type ComposeSources,
+} from '../src/engine/at1-netfile.service.js';
 
 const sources = (
   alberta: Record<string, unknown> = {},
@@ -244,5 +248,82 @@ describe('a snapshot frozen before the AT1 identity fields existed', () => {
     const d = composeAt1FilingData({ ...oldSnapshot(), forFiling: true });
     expect(d.contactPerson).toBeUndefined();
     expect(() => assertAt1MandatoryComplete(d)).toThrow(/000025 contact person/);
+  });
+});
+
+describe('composeAt1FilingData — the amendment indicator (EDI071/EDI073)', () => {
+  it('omits the amendment indicator when the engagement amends nothing', () => {
+    const d = composeAt1FilingData(sources(answered));
+    expect(d.transmitter.isAmended).toBeUndefined();
+  });
+
+  it('carries isAmended + the description through onto the transmitter block', () => {
+    const s = sources(answered);
+    s.amendment = { description: 'Increased the Alberta current-year loss to $50,000.' };
+    const d = composeAt1FilingData(s);
+    expect(d.transmitter.isAmended).toBe(true);
+    expect(d.transmitter.amendmentDescription).toBe(
+      'Increased the Alberta current-year loss to $50,000.',
+    );
+  });
+
+  it('REFUSES assertAt1MandatoryComplete when isAmended is set with a blank description', () => {
+    // `assertAt1MandatoryComplete` enforces the same rule regardless of a
+    // "draft" concept — the leniency for drafts lives in `prepareAt1NetFile`
+    // (which simply does not call this assert unless `forFiling`), not here.
+    const s = sources(answered);
+    s.amendment = { description: '' };
+    const d = composeAt1FilingData(s);
+    expect(() => assertAt1MandatoryComplete(d)).toThrow(/EDI073 description of changes/);
+  });
+});
+
+describe('assertValidAmendmentTarget — the relationship an amendment must have', () => {
+  const engagement = { clientId: 'client-1', program: 'AT1', taxYearEnd: new Date('2024-12-31') };
+
+  it('accepts a target with the same client, program and tax year end', () => {
+    expect(() =>
+      assertValidAmendmentTarget(engagement, {
+        clientId: 'client-1',
+        program: 'AT1',
+        taxYearEnd: new Date('2024-12-31'),
+      }),
+    ).not.toThrow();
+  });
+
+  it('refuses a dangling reference', () => {
+    expect(() => assertValidAmendmentTarget(engagement, null)).toThrow(
+      /amends an engagement that no longer exists/,
+    );
+  });
+
+  it('refuses a target belonging to a different client', () => {
+    expect(() =>
+      assertValidAmendmentTarget(engagement, {
+        clientId: 'client-2',
+        program: 'AT1',
+        taxYearEnd: new Date('2024-12-31'),
+      }),
+    ).toThrow(/same client, program and tax year end/);
+  });
+
+  it('refuses a target on a different program', () => {
+    expect(() =>
+      assertValidAmendmentTarget(engagement, {
+        clientId: 'client-1',
+        program: 'T2',
+        taxYearEnd: new Date('2024-12-31'),
+      }),
+    ).toThrow(/same client, program and tax year end/);
+  });
+
+  it('refuses a target with a different tax year end', () => {
+    expect(() =>
+      assertValidAmendmentTarget(engagement, {
+        clientId: 'client-1',
+        program: 'AT1',
+        taxYearEnd: new Date('2023-12-31'),
+      }),
+    ).toThrow(/same client, program and tax year end/);
   });
 });

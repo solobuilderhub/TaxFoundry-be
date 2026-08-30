@@ -105,6 +105,37 @@ const flag = (
   return {};
 };
 
+export interface AmendmentIdentity {
+  clientId: unknown;
+  program: string;
+  taxYearEnd: Date | string;
+}
+
+/**
+ * The relationship an amendment must have to the return it corrects: same
+ * client, same program, same tax year end. Extracted as a pure function (no
+ * DB access) so the business rule is unit-testable without `mongodb-memory-server` —
+ * `prepareAt1NetFile` only fetches `target` and hands it here.
+ */
+export function assertValidAmendmentTarget(
+  engagement: AmendmentIdentity,
+  target: AmendmentIdentity | null,
+): void {
+  if (!target) {
+    throw createError(422, 'This engagement amends an engagement that no longer exists');
+  }
+  if (
+    String(target.clientId) !== String(engagement.clientId) ||
+    target.program !== engagement.program ||
+    new Date(target.taxYearEnd).getTime() !== new Date(engagement.taxYearEnd).getTime()
+  ) {
+    throw createError(
+      422,
+      'The engagement this return amends must be the same client, program and tax year end — an amendment corrects a filed period, it does not refile a different one',
+    );
+  }
+}
+
 /** What the pure composer needs — already loaded, so the function stays testable. */
 export interface ComposeSources {
   computed: {
@@ -124,6 +155,12 @@ export interface ComposeSources {
     authorizedEmail?: string;
   };
   engagement: { taxYearStart: Date; taxYearEnd: Date };
+  /**
+   * Set when this engagement amends a previously-filed one (EDI071/EDI073 —
+   * see `at1-netfile.service.ts`'s `prepareAt1NetFile`, which resolves and
+   * validates `amendsEngagementYearId` before this composer ever sees it).
+   */
+  amendment?: { description: string };
   certification: Certification;
   /**
    * True on the real filing path. The live client record is then NOT consulted:
@@ -220,7 +257,9 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
     ...flag(ab, 'preparedByTaxPreparerForFee'),
     innovationEmploymentGrant: fieldValue(fields, 'innovationEmploymentGrant'),
     certification: src.certification,
-    transmitter: at1Transmitter,
+    transmitter: src.amendment
+      ? { ...at1Transmitter, isAmended: true, amendmentDescription: src.amendment.description }
+      : at1Transmitter,
   };
   return data;
 }
@@ -244,6 +283,30 @@ export async function prepareAt1NetFile(params: PrepareAt1Params): Promise<Prepa
     organizationId: params.orgId,
   });
   if (!client) throw createError(404, 'Client not found');
+
+  // Amended-return filing (EDI071/EDI073). Validated HERE, not at write time:
+  // `amendsEngagementYearId` is only ever meaningful in relation to Net File
+  // preparation, so that is where a stale/cross-client/cross-year reference
+  // gets caught, rather than duplicating the check on every save.
+  let amendment: { description: string } | undefined;
+  const amends = (engagement as { amendsEngagementYearId?: unknown }).amendsEngagementYearId;
+  if (amends) {
+    const target = (await engagementYearRepository.getOne({
+      _id: amends,
+      organizationId: params.orgId,
+    })) as WithId<EngagementYearDocument> | null;
+    assertValidAmendmentTarget(engagement, target);
+    // A blank description is NOT refused here — same leniency as every other
+    // mandatory-without-default field in this file (gross revenue, contact
+    // info, …): a draft must still render so the preparer can see what to
+    // fill in. `assertAt1MandatoryComplete` (below, `forFiling` only) is the
+    // actual gate.
+    amendment = {
+      description: String(
+        (engagement as { amendmentDescription?: string }).amendmentDescription ?? '',
+      ).trim(),
+    };
+  }
 
   // Latest computed snapshot for this engagement.
   const computed = await computedReturnRepository.getOne(
@@ -269,6 +332,7 @@ export async function prepareAt1NetFile(params: PrepareAt1Params): Promise<Prepa
     client: client as unknown as ComposeSources['client'],
     engagement: engagement as unknown as ComposeSources['engagement'],
     certification,
+    ...(amendment ? { amendment } : {}),
     ...(params.forFiling ? { forFiling: true } : {}),
   });
 

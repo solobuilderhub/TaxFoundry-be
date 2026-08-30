@@ -148,6 +148,204 @@ describe("Schedule 21 — the Alberta opening balance survives, not federal's", 
     // No current-year loss, no application, no expiry ⇒ closing = opening.
     expect(closing?.value).toBe(50_000);
   });
+
+  /**
+   * Regression case: the top-level "current year non-capital loss" (021021)
+   * and the continuity table's OWN "current year loss" row (021037) must
+   * agree — they are the same fact stated twice on the same schedule. Before
+   * this fix, 021021 used Alberta's own figure (via `albertaCurrentYearLoss`)
+   * while 021037 silently reused FEDERAL's `losses.nonCapital.currentYearLoss`
+   * — two different numbers for the same year whenever Alberta's CCA/reserve/
+   * disposition claims diverge from federal's (exactly what Schedule 12
+   * reconciles). No existing test caught it because the only prior fact
+   * pattern here was profitable (no loss at all, so both figures were 0).
+   */
+  it('the continuity table’s current-year-loss row (037) agrees with the top-level figure (021), even when Alberta diverges from federal', () => {
+    // A loss-position fact pattern where Alberta claims a class-13 CCA amount
+    // federal doesn't (class 13 has no declining-balance rate cap — see the
+    // Class 13 opening-balance drawdown, verified elsewhere this session — so
+    // the divergence isn't capped away the way a rate-capped class would be).
+    const lossFed = {
+      period,
+      bookNetIncome: -10_000, // already a federal loss before any CCA
+      activeBusinessIncome: 0,
+      ccaClasses: [{ ccaClass: '13', openingUCC: 15_000, claim: 0 }], // federal claims nil
+      openingNonCapitalLoss: 0,
+      nonCapitalLossToApply: 0,
+    };
+    const riLossDivergence = {
+      alberta: {
+        reportsDifferentAlbertaIncome: 'no',
+        electsDifferentDiscretionaryAmounts: 'yes',
+      },
+      cca: {
+        classes: [{ ccaClass: '13', albertaClaim: 15_000 }], // Alberta claims the full opening UCC
+      },
+      albertaContinuity: {
+        nonCapitalOpening: 0,
+        capitalOpening: 0,
+        farmOpening: 0,
+        restrictedFarmOpening: 0,
+      },
+    };
+
+    const engineInput = assembleProvincialInput('AT1', lossFed, riLossDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const topLevel = sch21?.values.find((v) => v.lineItemId === '021021001');
+    const continuityRow = sch21?.values.find((v) => v.lineItemId === '021037001');
+
+    // Federal current-year loss: 10,000 (no CCA claimed). Alberta: 10,000 +
+    // 15,000 (the class-13 claim only Alberta takes) = 25,000.
+    expect(topLevel?.value).toBe(25_000);
+    expect(continuityRow?.value).toBe(25_000); // NOT federal's 10,000
+  });
+});
+
+describe('runAT1Compute — Schedule 17 reserves take an Alberta override, per row', () => {
+  it("uses federal's own closing balance when no Alberta override is entered", () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch17 = out.schedulePayloads?.find((s) => s.scheduleId === '017');
+    const byId = new Map(sch17?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    // doubtfulDebts closing balance — federal's own 8,000 from `fed.reserveContinuity`.
+    expect(byId.get('017061001')).toBe(8_000);
+  });
+
+  it('overrides one kind with an Alberta-only closing balance, leaving the others at federal', () => {
+    // `albertaOpening`/`albertaTransfer`/`albertaClosing` ride on the SAME
+    // `fed.reserveContinuity` row (see `assemble-t2-input.ts`'s `scheduleThirteen`,
+    // which carries them through from `ri.reserves.rows` unchanged) — this test
+    // supplies `fed` directly, as the rest of this file does, so the override
+    // goes straight onto the row rather than through a separate `ri` slice.
+    const fedWithReserveOverride = {
+      ...fed,
+      reserveContinuity: [
+        {
+          type: 'doubtfulDebts',
+          opening: 5_000,
+          transfer: 0,
+          closing: 8_000,
+          albertaClosing: 12_000,
+        },
+      ],
+    };
+    const engineInput = assembleProvincialInput('AT1', fedWithReserveOverride, riWithDivergence, {
+      isCcpc: true,
+    });
+    const out = runAT1Compute(engineInput);
+    const sch17 = out.schedulePayloads?.find((s) => s.scheduleId === '017');
+    const byId = new Map(sch17?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    expect(byId.get('017061001')).toBe(12_000); // Alberta override, not federal's 8,000
+    expect(byId.get('017001001')).toBe(5_000); // opening still defaults to federal
+  });
+
+  it('files an Alberta-only reserve kind (bank reserves) that has no federal Part 2 line at all', () => {
+    const fedWithBankRow = {
+      ...fed,
+      reserveContinuity: [
+        ...fed.reserveContinuity,
+        { type: 'bankReserves', opening: 0, transfer: 0, closing: 0, albertaClosing: 25_000 },
+      ],
+    };
+    const engineInput = assembleProvincialInput('AT1', fedWithBankRow, riWithDivergence, {
+      isCcpc: true,
+    });
+    const out = runAT1Compute(engineInput);
+    const sch17 = out.schedulePayloads?.find((s) => s.scheduleId === '017');
+    const byId = new Map(sch17?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    // bankReserves closing — 017075. Federal reads 0; the Alberta override carries it.
+    expect(byId.get('017075001')).toBe(25_000);
+  });
+});
+
+describe('runAT1Compute — the nine previously-unmodeled schedules (3/4/5/6/7/8/9/11/15) reach the filed payload', () => {
+  const riNineSchedules = {
+    ...riWithDivergence,
+    albertaOtherCredits3: {
+      itcCertificatesIssued: 10_000,
+      itcAmountApplied: 5_000,
+    },
+    albertaForeignInvestment4: {
+      countries: [{ country: 'US', netForeignInvestmentIncome: 20_000, fedForeignTaxPaid: 3_000 }],
+    },
+    albertaRoyaltyDeduction5: {
+      crownChargesFromSchedule7: 15_000,
+      openingUnsuccessoredPoolBalance: 5_000,
+    },
+    albertaRoyaltyCredit6: {
+      albertaCrownRoyaltyIncurred: 12_000,
+    },
+    albertaRoyaltySupplemental7: {
+      eligibleCrownRoyalty: 15_000,
+    },
+    albertaPoliticalContributions8: {
+      contributions: [
+        { name: 'A Party', receiptNumber: 'R1', dateOfDonation: '2024-06-01', amount: 500 },
+      ],
+    },
+    albertaSredCredit9: {
+      federalQualifiedExpenditures: 100_000,
+      albertaPortionOfExpenditures: 60_000,
+    },
+    albertaManufacturing11: {
+      manufacturingGrossRevenue: 200_000,
+      totalGrossRevenue: 500_000,
+    },
+    albertaResourceDeductions15: {
+      ceeRegular: { federalCurrentYearExpenses: 10_000, claimed: 2_000 },
+    },
+  };
+
+  it('files schedules 003, 004, 005, 006, 007, 008, 009, 011 and 015 for a fact pattern that touches each', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riNineSchedules, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId).sort();
+
+    for (const id of ['003', '004', '005', '006', '007', '008', '009', '011', '015']) {
+      expect(filedIds).toContain(id);
+    }
+  });
+
+  it('files Schedule 9 page-3 lines 200/202/204 (longest-year CAN and tax-year dates) when a group is entered', () => {
+    const riWithSredGroup = {
+      ...riNineSchedules,
+      albertaSredCredit9: {
+        ...riNineSchedules.albertaSredCredit9,
+        longestYearCan: '1234567',
+        longestYearBegin: '2024-01-01',
+        longestYearEnd: '2024-12-31',
+        daysInLongestYear: 366,
+        group: [
+          { name: 'Claimant', albertaCan: '1234567', allocated: 2_000_000 },
+          { name: 'B Co', albertaCan: '7654321', allocated: 1_000_000 },
+        ],
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithSredGroup, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch9 = out.schedulePayloads?.find((s) => s.scheduleId === '009');
+    const byId = new Map(sch9?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    expect(byId.get('009200001')).toBe('1234567');
+    expect(byId.get('009202001')).toBe('2024-01-01');
+    expect(byId.get('009204001')).toBe('2024-12-31');
+    // Per-member allocation rows (220/230/240) still file too — the new
+    // longest-year fields are additive, not a replacement.
+    expect(byId.get('009220001')).toBe('Claimant');
+  });
+
+  it('omits all nine when their slices are absent, even with other AT1 schedules present', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId);
+
+    for (const id of ['003', '004', '005', '006', '007', '008', '009', '011', '015']) {
+      expect(filedIds).not.toContain(id);
+    }
+    // The pre-existing fact pattern still files what it always did.
+    expect(filedIds).toContain('013');
+    expect(filedIds).toContain('021');
+  });
 });
 
 describe('runAT1Compute — Schedule 29 (IEG) composes from the AT1-only slice', () => {
@@ -155,7 +353,8 @@ describe('runAT1Compute — Schedule 29 (IEG) composes from the AT1-only slice',
     const riWithIeg = {
       ...riWithDivergence,
       albertaIeg: {
-        eligibleExpenditures: 400_000,
+        federalAmount: 400_000,
+        albertaPortion: 400_000,
         group: [
           { name: 'Claimant', taxableCapital: 5_000_000, priorYear1: 300_000, priorYear2: 200_000 },
         ],
@@ -182,7 +381,8 @@ describe('runAT1Compute — Schedule 29 page 3 (the Agreement Among Associated C
   const riWithAgreement = {
     ...riWithDivergence,
     albertaIeg: {
-      eligibleExpenditures: 1_000_000,
+      federalAmount: 1_000_000,
+      albertaPortion: 1_000_000,
       group: [
         { name: 'A', taxableCapital: 10_000_000, priorYear1: 750_000, priorYear2: 600_000 },
         { name: 'B', taxableCapital: 3_000_000, priorYear1: 0, priorYear2: 500_000 },
@@ -243,7 +443,8 @@ describe('runAT1Compute — Schedule 29 page 3 (the Agreement Among Associated C
     const noAgreement = {
       ...riWithDivergence,
       albertaIeg: {
-        eligibleExpenditures: 1_000_000,
+        federalAmount: 1_000_000,
+        albertaPortion: 1_000_000,
         group: riWithAgreement.albertaIeg.group,
       },
     };
@@ -254,5 +455,242 @@ describe('runAT1Compute — Schedule 29 page 3 (the Agreement Among Associated C
     expect(byId.has('029112001')).toBe(true);
     expect(byId.has('029125001')).toBe(false);
     expect(byId.has('029200001')).toBe(false);
+  });
+});
+
+// End to end through the UI shape: AT4970 project rows + the page-1
+// derivation + PE-eligibility, all parsed from `albertaIeg` exactly as the
+// return editor saves it, landing on TRA's own published NET IEG (89,250)
+// for the fact pattern Fall 2026 Test Case 3 is built from. See
+// research/knowledge-base/at1-schedule-29-ieg-mechanics.md.
+describe('runAT1Compute — AT4970 + page 1 + PE-eligibility, wired from the UI shape', () => {
+  const riFull = {
+    ...riWithDivergence,
+    albertaIeg: {
+      federalAmount: 1_500_000,
+      projects: [
+        {
+          title: 'Project A',
+          projectCode: '2.11.03',
+          albertaPortion: 1_000_000,
+          otherPortion: 500_000,
+          salariesAndWages: 400_000,
+        },
+      ],
+      primaryFieldCode: '2',
+      group: [
+        { name: 'A', taxableCapital: 10_000_000, priorYear1: 750_000, priorYear2: 600_000 },
+        { name: 'B', taxableCapital: 3_000_000, priorYear1: 0, priorYear2: 500_000 },
+        { name: 'C', taxableCapital: 5_000_000, priorYear1: 80_000, priorYear2: 0 },
+        { name: 'D', taxableCapital: 2_000_000 },
+      ],
+      agreementLongestYearCan: 'B-CAN',
+      agreementLongestYearBegin: '2022-07-01',
+      agreementLongestYearEnd: '2023-06-30',
+      agreementDaysInLongestYear: 365,
+      agreementMembers: [
+        {
+          name: 'A',
+          allocatedExpenditureLimit: 3_000_000,
+          currentYearExpenditures: 1_000_000,
+          priorYear1: 750_000,
+          priorYear2: 600_000,
+          taxableCapitalPriorYear: 10_000_000,
+          daysInTaxYear: 365,
+        },
+        {
+          name: 'B',
+          allocatedExpenditureLimit: 1_000_000,
+          currentYearExpenditures: 200_000,
+          priorYear1: 0,
+          priorYear2: 500_000,
+          taxableCapitalPriorYear: 3_000_000,
+          daysInTaxYear: 365,
+          hasAlbertaPermanentEstablishment: 'yes',
+        },
+        {
+          name: 'C',
+          allocatedExpenditureLimit: 0,
+          currentYearExpenditures: 100_000,
+          priorYear1: 80_000,
+          priorYear2: 0,
+          taxableCapitalPriorYear: 5_000_000,
+          daysInTaxYear: 365,
+          hasAlbertaPermanentEstablishment: 'no', // BC PE only
+        },
+        {
+          name: 'D',
+          allocatedExpenditureLimit: 0,
+          currentYearExpenditures: 0,
+          priorYear1: 0,
+          priorYear2: 0,
+          taxableCapitalPriorYear: 2_000_000,
+          daysInTaxYear: 365,
+          hasAlbertaPermanentEstablishment: 'no', // Ontario PE only
+        },
+      ],
+    },
+  };
+
+  it('derives 031 from the AT4970 project row, with no eligibleExpenditures field anywhere in the UI shape', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riFull, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch29 = out.schedulePayloads?.find((s) => s.scheduleId === '029');
+    const byId = new Map(sch29?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    expect(byId.get('029003001')).toBe(1_500_000);
+    expect(byId.get('029005001')).toBe(1_000_000); // from the project row's own 105
+    expect(byId.get('029031001')).toBe(1_000_000);
+    expect(byId.get('029040001')).toBe(2); // primaryFieldCode, coerced to a number
+
+    const sch4970 = out.schedulePayloads?.find((s) => s.scheduleId === '4970');
+    expect(sch4970).toBeDefined();
+  });
+
+  it('lands on TRA’s own published NET IEG — 89,250 — with C and D correctly zeroed for having no Alberta PE', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riFull, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const grantLine = out.fields.find((f) => f.line === 'innovationEmploymentGrant');
+    expect(grantLine?.value).toBe(89_250);
+
+    const sch29 = out.schedulePayloads?.find((s) => s.scheduleId === '029');
+    const byId = new Map(sch29?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    expect(byId.get('029125001')).toBe(39_000);
+    expect(byId.get('029134001')).toBe(89_250);
+    // C's own 267 is positive (60,000) but 268 must still be 0 — no Alberta PE.
+    expect(byId.get('029267003')).toBe(60_000);
+    expect(byId.get('029268003')).toBe(0);
+  });
+});
+
+describe('Schedule 21 — Alberta-specific overrides for applied/expired/wind-up/s.80/other-adjustments', () => {
+  it('defaults every pool to federal (0/undefined) when nothing is entered', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+
+    // No wind-up transfer / s.80 / other adjustments entered ⇒ nil, but still
+    // FILED (021035/043/045 for non-capital) — the fix that closes the "engine
+    // computes it but never writes it" gap.
+    expect(byId.get('021035001')).toBe(0);
+    expect(byId.get('021043001')).toBe(0);
+    expect(byId.get('021045001')).toBe(0);
+  });
+
+  it('overrides applied/expired with Alberta’s own figure when entered, instead of federal’s', () => {
+    const riWithOverrides = {
+      ...riWithDivergence,
+      albertaContinuity: {
+        ...riWithDivergence.albertaContinuity,
+        nonCapitalApplied: 12_000, // Alberta applied more against income than federal did
+        nonCapitalExpired: 3_000, // Alberta expired a different amount
+        nonCapitalWindUpTransfer: 7_000,
+        nonCapitalSection80Adjustment: 1_000,
+        nonCapitalOtherAdjustments: 500,
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithOverrides, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+
+    expect(byId.get('021041001')).toBe(12_000); // applied — Alberta's, not federal's (0)
+    expect(byId.get('021032001')).toBe(3_000); // expired — Alberta's, not federal's (0)
+    expect(byId.get('021035001')).toBe(7_000); // wind-up transfer — no federal equivalent at all
+    expect(byId.get('021043001')).toBe(1_000); // s.80 adjustment
+    expect(byId.get('021045001')).toBe(500); // other adjustments
+  });
+
+  it('an explicit 0 override is real (not "same as federal") — matches the CCA-override convention elsewhere', () => {
+    // federal.losses.nonCapital.appliedCurrentYear is 0 here anyway (no loss
+    // applied against income in this fact pattern), so this specifically
+    // proves presence-detection, not just a nonzero-value happy path.
+    const riZeroOverride = {
+      ...riWithDivergence,
+      albertaContinuity: { ...riWithDivergence.albertaContinuity, nonCapitalApplied: 0 },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riZeroOverride, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+    expect(byId.get('021041001')).toBe(0);
+  });
+});
+
+describe('Schedule 21 — limited partnership loss continuity (lines 131-141)', () => {
+  it('files a row per partnership, merged into the same 021 payload', () => {
+    const riWithPartnerships = {
+      ...riWithDivergence,
+      albertaContinuity: {
+        ...riWithDivergence.albertaContinuity,
+        limitedPartnerships: [
+          {
+            identifier: 'Northgate LP',
+            precedingYearBalance: 50_000,
+            transferredOnWindUp: 10_000,
+            currentYearLoss: 5_000,
+            applied: 20_000,
+          },
+          // Blank row from the array editor (no balance entered) — must not
+          // produce a spurious 002-occurrence row.
+          { identifier: '' },
+        ],
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithPartnerships, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId);
+    expect(filedIds.filter((id) => id === '021')).toHaveLength(1); // ONE 021 block, not two
+
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+    expect(byId.get('021131001')).toBe('Northgate LP');
+    expect(byId.get('021133001')).toBe(50_000);
+    expect(byId.get('021141001')).toBe(45_000);
+    expect(byId.has('021133002')).toBe(false); // the blank row contributed nothing
+  });
+});
+
+describe('Schedule 21 — losses by year of origin (row 0 derived, priors are AT1-only input)', () => {
+  it('derives row 0 from the SAME figures already computed for the pool and the top-level loss', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+
+    const topLevelLoss = byId.get('021021001'); // may be 0 for this profitable fixture
+    const carriedBack = byId.get('021047001') ?? 0;
+    expect(byId.get('021151001')).toBe(0); // row 0 = the current year
+    expect(byId.get('021157001')).toBe(topLevelLoss); // 157 must equal 021021
+    expect(byId.get('021165001')).toBe(carriedBack); // 165 must equal 021047
+  });
+
+  it('accepts a preparer-entered prior vintage, with row 0 still derived alongside it', () => {
+    const riWithVintage = {
+      ...riWithDivergence,
+      albertaContinuity: {
+        ...riWithDivergence.albertaContinuity,
+        nonCapitalVintages: [
+          { yearsAgo: 2, taxYearEnd: '2022-12-31', balanceAtBeginning: 12_000, applied: 5_000 },
+        ],
+        otherLossVintages: [{ yearIndex: 0, farmLosses: 3_000 }],
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithVintage, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+
+    // Row 0 (occurrence 1) still present and derived.
+    expect(byId.get('021151001')).toBe(0);
+    // Row for yearsAgo=2 (occurrence 2).
+    expect(byId.get('021151002')).toBe(2);
+    expect(byId.get('021153002')).toBe('2022-12-31');
+    expect(byId.get('021155002')).toBe(12_000);
+    expect(byId.get('021167002')).toBe(5_000);
+    expect(byId.get('021169002')).toBe(7_000);
+    // The other-losses ledger (181/183) filed too.
+    expect(byId.get('021181001')).toBe(0);
+    expect(byId.get('021183001')).toBe(3_000);
   });
 });

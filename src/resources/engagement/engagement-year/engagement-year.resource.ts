@@ -29,7 +29,7 @@ import EngagementYear, { type EngagementYearDocument } from './engagement-year.m
 import engagementYearRepository from './engagement-year.repository.js';
 
 const queryParser = new QueryParser({
-  allowedFilterFields: ['program', 'status', 'clientId', 'firstReturn'],
+  allowedFilterFields: ['program', 'status', 'clientId', 'firstReturn', 'amendsEngagementYearId'],
 });
 
 const engagementYearResource = defineResource<EngagementYearDocument>({

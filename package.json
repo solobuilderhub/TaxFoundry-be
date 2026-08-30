@@ -24,7 +24,7 @@
     "@better-auth/api-key": "^1.7.1",
     "@better-auth/mongo-adapter": "^1.7.1",
     "@classytic/arc": "^2.34.0",
-    "@classytic/ca-tax": "^0.0.2",
+    "@classytic/ca-tax": "^0.0.12",
     "@classytic/fin-io": "^0.6.7",
     "@classytic/ledger-ca": "^0.5.0",
     "@classytic/mongokit": "^3.34.0",
