@@ -48,8 +48,12 @@
  * branch, rather than guessed at from a field path that doesn't exist.
  */
 import { type AlbertaSchedule8Result, computeAlbertaSchedule8 } from '@classytic/ca-tax/t2';
+import type {
+  AlbertaPoliticalContributions8Values,
+  AlbertaValues,
+  ReturnInput,
+} from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v) || 0);
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
@@ -60,9 +64,9 @@ const present = (v: unknown): boolean => v != null && v !== '';
  * Schedule 8 to file, matching the `undefined`-return pattern the rest of
  * `assemble-at1-schedules.ts` uses (e.g. `scheduleTwenty`, `scheduleTen`).
  */
-export function assembleSchedule8(ri: Ri): AlbertaSchedule8Result | undefined {
-  const s8: Ri = ri.albertaPoliticalContributions8 ?? {};
-  const rows: Ri[] = s8.contributions ?? [];
+export function assembleSchedule8(ri: ReturnInput): AlbertaSchedule8Result | undefined {
+  const s8: AlbertaPoliticalContributions8Values = ri.albertaPoliticalContributions8 ?? {};
+  const rows = s8.contributions ?? [];
   const contributions = rows.filter(
     (c) => present(c?.name) || present(c?.amount) || present(c?.dateOfDonation),
   );
@@ -72,7 +76,10 @@ export function assembleSchedule8(ri: Ri): AlbertaSchedule8Result | undefined {
 
   if (contributions.length === 0 && !hasPartnership) return undefined; // nothing to file
 
-  const ab: Ri = ri.alberta ?? {};
+  // `remainingBasicTax` is NOT yet a field on `AlbertaValues` — see this
+  // module's own header comment (same not-yet-wired jacket-line pattern as
+  // `schedule-4-compose.ts`'s `albertaTaxableIncome`/etc.).
+  const ab: AlbertaValues & { remainingBasicTax?: number } = ri.alberta ?? {};
 
   return computeAlbertaSchedule8({
     contributions: contributions.map((c) => ({

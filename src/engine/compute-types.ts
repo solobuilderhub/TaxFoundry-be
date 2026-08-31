@@ -34,4 +34,13 @@ export interface EngineComputeOutput {
     scheduleId: string;
     values: { lineItemId: string; value: string | number }[];
   }[];
+  /**
+   * Anything the schedules want the preparer to see — a fail-closed default
+   * that suppressed a claim, an amount capped by a shared ceiling, a missing
+   * input the engine could not derive. Persisted alongside the computed
+   * return so the review layer and the paper Form Views can both surface
+   * them, rather than each rebuilding its own copy from the raw schedule
+   * results (T2 does not emit these yet — AT1-only for now).
+   */
+  issues?: string[];
 }

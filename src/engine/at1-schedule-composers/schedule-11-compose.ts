@@ -55,8 +55,9 @@
  *     costOfLabour, albertaCostOfLabour                          (lines 031/033/037/039)
  */
 import { computeSchedule11, type Schedule11Result } from '@classytic/ca-tax/t2';
+import type { ComposedFederalInput } from '../assemble-t2-input.js';
+import type { AlbertaManufacturing11Values, ReturnInput } from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
@@ -78,8 +79,11 @@ function isoDay(d: unknown): string | undefined {
  * The composition entry point. Returns `undefined` when nothing meaningful
  * was entered — most engagements never touch this historical schedule.
  */
-export function assembleSchedule11(fed: Ri, ri: Ri): Schedule11Result | undefined {
-  const m: Ri = ri.albertaManufacturing11 ?? {};
+export function assembleSchedule11(
+  fed: ComposedFederalInput,
+  ri: ReturnInput,
+): Schedule11Result | undefined {
+  const m: AlbertaManufacturing11Values = ri.albertaManufacturing11 ?? {};
 
   const enteredSomething =
     present(m.manufacturingGrossRevenue) ||

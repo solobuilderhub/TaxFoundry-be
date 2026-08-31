@@ -53,15 +53,22 @@ import {
   type AlbertaSchedule5Result,
   computeAlbertaSchedule5,
 } from '@classytic/ca-tax/t2';
+import type {
+  AlbertaRoyaltyDeduction5Values,
+  PredecessorTransferRow,
+  ReturnInput,
+  SuccessoredPoolRow,
+} from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
 const yes = (v: unknown): boolean => v === 'yes';
 
-function predecessorTransfers(ri: Ri): AlbertaSchedule5Input['predecessorTransfers'] {
-  const rows: Ri[] = ri.predecessorTransfers ?? [];
+function predecessorTransfers(
+  s5: AlbertaRoyaltyDeduction5Values,
+): AlbertaSchedule5Input['predecessorTransfers'] {
+  const rows: PredecessorTransferRow[] = s5.predecessorTransfers ?? [];
   return rows
     .filter((r) => present(r?.predecessorName) || present(r?.amountTransferred))
     .map((r) => ({
@@ -75,7 +82,7 @@ function predecessorTransfers(ri: Ri): AlbertaSchedule5Input['predecessorTransfe
 }
 
 function successoredPoolEntries(
-  rows: Ri[] | undefined,
+  rows: SuccessoredPoolRow[] | undefined,
 ): AlbertaSchedule5Input['secondSuccessoredPools'] {
   return (rows ?? [])
     .filter(
@@ -91,8 +98,8 @@ function successoredPoolEntries(
     }));
 }
 
-function poolTransfer(ri: Ri): AlbertaSchedule5Input['poolTransfer'] {
-  const pt: Ri = ri.poolTransfer ?? {};
+function poolTransfer(s5: AlbertaRoyaltyDeduction5Values): AlbertaSchedule5Input['poolTransfer'] {
+  const pt = s5.poolTransfer ?? {};
   if (!present(pt.type)) return undefined;
   const type = Number(pt.type);
   if (type !== 1 && type !== 2 && type !== 3) return undefined;
@@ -109,8 +116,8 @@ function poolTransfer(ri: Ri): AlbertaSchedule5Input['poolTransfer'] {
  * pattern the rest of `assemble-at1-schedules.ts` uses (e.g. `scheduleTwenty`,
  * `scheduleTen`) and `assembleSchedule3`'s own gate.
  */
-export function assembleSchedule5(ri: Ri): AlbertaSchedule5Result | undefined {
-  const s5: Ri = ri.albertaRoyaltyDeduction5 ?? {};
+export function assembleSchedule5(ri: ReturnInput): AlbertaSchedule5Result | undefined {
+  const s5: AlbertaRoyaltyDeduction5Values = ri.albertaRoyaltyDeduction5 ?? {};
 
   const hasCrtdActivity =
     present(s5.crownChargesFromSchedule7) ||

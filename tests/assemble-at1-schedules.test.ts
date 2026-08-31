@@ -45,6 +45,8 @@ const riWithDivergence = {
   alberta: {
     reportsDifferentAlbertaIncome: 'no',
     electsDifferentDiscretionaryAmounts: 'yes', // TRA permits Sch 13/17/18 on either flag
+  },
+  albertaSbd: {
     corporationStatus: 'ccpc',
   },
   albertaContinuity: {
@@ -82,6 +84,108 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
     expect(engineInput.schedules?.donations).toBeDefined();
   });
 
+  it('files the gifts pool from federal cultural + ecological gifts, with no Alberta override', () => {
+    // `cultural`/`ecological` are NOT fields of the assembled federal engine
+    // input (`assembleT2Input` folds both into the single `charitableDonations`
+    // total — see `assemble-t2-input.ts`'s own `AssembledFederalInput` doc
+    // comment) — they only ever exist on the structured working return's
+    // `donations` slice, which is what `scheduleTwenty` actually reads this
+    // default from.
+    const riWithGifts = {
+      ...riWithDivergence,
+      donations: { cultural: 4_000, ecological: 6_000 },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithGifts, {
+      isCcpc: true,
+    }) as { schedules?: { donations?: { gifts?: { currentYearGifts: number } } } };
+    expect(engineInput.schedules?.donations?.gifts?.currentYearGifts).toBe(10_000);
+  });
+
+  it('lets an Alberta override replace the federal-derived gifts figure', () => {
+    const riWithGiftsOverride = {
+      ...riWithDivergence,
+      donations: { cultural: 4_000, ecological: 6_000 },
+      albertaDonations: { giftsCurrentYear: 25_000 },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithGiftsOverride, {
+      isCcpc: true,
+    }) as { schedules?: { donations?: { gifts?: { currentYearGifts: number } } } };
+    expect(engineInput.schedules?.donations?.gifts?.currentYearGifts).toBe(25_000);
+  });
+
+  it('caps the TWO donation pools against ONE shared 75%-of-income ceiling, not one each', () => {
+    // Alberta net income for tax purposes is large enough that the two pools'
+    // own available balances are the binding constraint individually, but
+    // NOT large enough for both to claim their full balance simultaneously —
+    // this is the case that would silently over-claim if each pool were
+    // capped against the full ceiling independently instead of sequentially.
+    const riWithBothPools = {
+      ...riWithDivergence,
+      albertaDonations: {
+        giftsCurrentYear: 90_000,
+      },
+    };
+    const fedSmallIncome = { ...fed, bookNetIncome: 20_000, activeBusinessIncome: 20_000 };
+    const engineInput = assembleProvincialInput('AT1', fedSmallIncome, riWithBothPools, {
+      isCcpc: true,
+    }) as {
+      schedules?: {
+        donations?: {
+          charitable?: { amountApplied: number };
+          gifts?: { amountApplied: number };
+          maximum?: { maximumDeduction: number };
+        };
+      };
+    };
+    const donations = engineInput.schedules?.donations;
+    expect(donations?.maximum).toBeDefined();
+    const combined = (donations?.charitable?.amountApplied ?? 0) + (donations?.gifts?.amountApplied ?? 0);
+    expect(combined).toBeLessThanOrEqual(donations!.maximum!.maximumDeduction);
+  });
+
+  it('lines 090-100 — carries no yearOfOrigin when none was entered (the renderer gates filing the block on it)', () => {
+    const riWithGifts = { ...riWithDivergence, albertaDonations: { giftsCurrentYear: 10_000 } };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithGifts, { isCcpc: true }) as {
+      schedules?: { donations?: { gifts?: { carryforward?: Record<string, unknown> } } };
+    };
+    // `charitable` may still be present (it defaults from the charitable pool's own
+    // closing balance whenever that pool exists) — what actually gates the whole
+    // 090-100 block being FILED is `yearOfOrigin`, verified renderer-side in
+    // `packages/ca-tax/tests/at1-netfile-schedules.test.ts`.
+    expect(engineInput.schedules?.donations?.gifts?.carryforward?.yearOfOrigin).toBeUndefined();
+  });
+
+  it('lines 090-100 — carries the entered breakdown, defaulting charitable to its own pool\'s closing balance', () => {
+    const riWithBreakdown = {
+      ...riWithDivergence,
+      alberta: { ...riWithDivergence.alberta },
+      albertaDonations: {
+        giftsCurrentYear: 10_000,
+        carryforwardYearOfOrigin: '2024-12-31',
+        carryforwardToCanadaOrProvince: 2_000,
+        carryforwardCulturalProperty: 1_000,
+      },
+    };
+    const fedWithCharitable = { ...fed, charitableDonations: 5_000, openingDonationPool: 40_000 };
+    const engineInput = assembleProvincialInput('AT1', fedWithCharitable, riWithBreakdown, {
+      isCcpc: true,
+    }) as {
+      schedules?: {
+        donations?: {
+          charitable?: { closingBalance: number };
+          gifts?: { carryforward?: Record<string, unknown> };
+        };
+      };
+    };
+    const donations = engineInput.schedules?.donations;
+    expect(donations?.gifts?.carryforward).toEqual({
+      yearOfOrigin: '2024-12-31',
+      charitable: donations?.charitable?.closingBalance,
+      toCanadaOrProvince: 2_000,
+      culturalProperty: 1_000,
+    });
+  });
+
   it('populates loss continuity only when Alberta opening balances were entered', () => {
     const withoutContinuity = { alberta: riWithDivergence.alberta };
     const engineInput = assembleProvincialInput('AT1', fed, withoutContinuity, {
@@ -95,6 +199,46 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
       isCcpc: true,
     }) as { schedules?: Record<string, unknown> };
     expect(engineInputWithContinuity.schedules?.losses).toBeDefined();
+  });
+});
+
+// These check the COMPOSER's own output (`engineInput.schedules.smallBusinessDeduction`),
+// not the rendered `schedulePayloads` — apps/server pins a PUBLISHED @classytic/ca-tax,
+// so a local edit to that package's renderer (`schedule1Values`) is not live here until a
+// fresh publish. The renderer's own correctness is covered directly in
+// `packages/ca-tax/tests/at1-netfile-schedules.test.ts`.
+describe('Schedule 1 — Area A (Agreement Among Associated Corporations)', () => {
+  it('omits agreementMembers when nothing was entered', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, {
+      isCcpc: true,
+    }) as { schedules?: { smallBusinessDeduction?: { agreementMembers?: unknown[] } } };
+    expect(engineInput.schedules?.smallBusinessDeduction?.agreementMembers).toBeUndefined();
+  });
+
+  it('carries the agreement table through, in entry order, dropping blank rows', () => {
+    const riWithAgreement = {
+      ...riWithDivergence,
+      albertaSbd: {
+        ...riWithDivergence.albertaSbd,
+        associatedCorpAgreement: [
+          { name: 'Filer Corp', albertaCan: '1234567890', allocatedAmount: 300_000 },
+          { name: 'Holdco Ltd.', albertaCan: '0987654321', allocatedAmount: 200_000 },
+          {},
+        ],
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithAgreement, { isCcpc: true }) as {
+      schedules?: {
+        smallBusinessDeduction?: {
+          agreementMembers?: { name?: string; albertaCan?: string; allocatedAmount?: number }[];
+        };
+      };
+    };
+    const members = engineInput.schedules?.smallBusinessDeduction?.agreementMembers;
+    expect(members).toEqual([
+      { name: 'Filer Corp', albertaCan: '1234567890', allocatedAmount: 300_000 },
+      { name: 'Holdco Ltd.', albertaCan: '0987654321', allocatedAmount: 200_000 },
+    ]);
   });
 });
 
@@ -123,6 +267,82 @@ describe('runAT1Compute — the filed payload carries the schedules, not just th
     const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId);
     expect(filedIds).not.toContain('013');
     expect(filedIds).not.toContain('021');
+  });
+});
+
+describe('Schedule 10 — farm and the checkbox-selected "other loss" column', () => {
+  // These check the COMPOSER's own output (`engineInput.schedules`), not the
+  // rendered `schedulePayloads` — `apps/server` depends on `@classytic/ca-tax`
+  // as a PUBLISHED package (see the repo-topology note), so the renderer
+  // (`schedule10Values`) it runs at test time is whatever was last published,
+  // not this session's local source edits. The renderer's own correctness —
+  // 023/025 always filed, the combined-total math — is covered directly in
+  // `packages/ca-tax/tests/at1-netfile-schedules.test.ts`, which DOES run
+  // against local source. This file only proves apps/server's OWN composer
+  // logic (which fully applies at test time, being this repo's own code).
+  it('composes the farm carry-back column, separate from non-capital', () => {
+    const riWithFarmCarryback = {
+      ...riWithDivergence,
+      albertaContinuity: {
+        ...riWithDivergence.albertaContinuity,
+        farmCurrentYearLoss: 40_000,
+        farmCarrybacks: [{ taxYearEnd: '2023-12-31', amount: 15_000 }],
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithFarmCarryback, { isCcpc: true }) as {
+      schedules?: {
+        lossCarryback?: { farm?: { currentYearLoss: number; totalCarriedBack: number; remainingLoss: number } };
+      };
+    };
+    const farm = engineInput.schedules?.lossCarryback?.farm;
+    expect(farm?.currentYearLoss).toBe(40_000);
+    expect(farm?.totalCarriedBack).toBe(15_000);
+    expect(farm?.remainingLoss).toBe(25_000);
+  });
+
+  it('checks BOTH other-loss boxes and combines their current-year losses — not mutually exclusive', () => {
+    const riBothOtherLosses = {
+      ...riWithDivergence,
+      albertaContinuity: {
+        ...riWithDivergence.albertaContinuity,
+        restrictedFarmCurrentYearLoss: 12_000,
+        lppOpening: 0,
+        lppCurrentYearLoss: 8_000,
+        otherLossIncludesRestrictedFarm: 'yes',
+        otherLossIncludesListedPersonal: 'yes',
+        otherLossCarrybacks: [{ taxYearEnd: '2023-12-31', amount: 10_000 }],
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riBothOtherLosses, { isCcpc: true }) as {
+      schedules?: {
+        lossCarryback?: {
+          otherLoss?: {
+            includesRestrictedFarm: boolean;
+            includesListedPersonal: boolean;
+            result: { currentYearLoss: number; totalCarriedBack: number };
+          };
+        };
+        losses?: {
+          restrictedFarm?: { closingBalance: number };
+          listedPersonalProperty?: { closingBalance: number };
+        };
+      };
+    };
+    const otherLoss = engineInput.schedules?.lossCarryback?.otherLoss;
+    expect(otherLoss?.includesRestrictedFarm).toBe(true);
+    expect(otherLoss?.includesListedPersonal).toBe(true);
+    // The shared column's current-year loss is the SUM: 12,000 + 8,000.
+    expect(otherLoss?.result.currentYearLoss).toBe(20_000);
+    expect(otherLoss?.result.totalCarriedBack).toBe(10_000);
+
+    // The 10,000 carried back splits proportionally across Schedule 21's two
+    // separate continuities (12,000:8,000 ⇒ 6,000:4,000) rather than being
+    // silently dropped or double-counted on either pool.
+    const restrictedFarmClosing = engineInput.schedules?.losses?.restrictedFarm?.closingBalance;
+    const lppClosing = engineInput.schedules?.losses?.listedPersonalProperty?.closingBalance;
+    // Closing = opening(0) + currentYearLoss - carriedBack - applied - expired.
+    expect(restrictedFarmClosing).toBe(12_000 - 6_000);
+    expect(lppClosing).toBe(8_000 - 4_000);
   });
 });
 

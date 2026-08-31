@@ -40,8 +40,8 @@
  *     ("1" | "2"), increase, decrease, adjustmentNotEligibleForCredit }[] (ACRA)
  */
 import { computeAlbertaSchedule7, type AlbertaSchedule7Result } from '@classytic/ca-tax/t2';
+import type { AlbertaRoyaltySupplemental7Values, ReturnInput } from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
@@ -64,8 +64,8 @@ const CPI_MONEY_FIELDS = [
  * pattern the rest of `assemble-at1-schedules.ts` uses (e.g. `scheduleTwenty`,
  * `scheduleTen`).
  */
-export function assembleSchedule7(ri: Ri): AlbertaSchedule7Result | undefined {
-  const s7: Ri = ri.albertaRoyaltySupplemental7 ?? {};
+export function assembleSchedule7(ri: ReturnInput): AlbertaSchedule7Result | undefined {
+  const s7: AlbertaRoyaltySupplemental7Values = ri.albertaRoyaltySupplemental7 ?? {};
 
   const otherNonDeductibleCrownChargeTypes = [
     s7.otherNonDeductibleCrownChargeType1,
@@ -73,12 +73,12 @@ export function assembleSchedule7(ri: Ri): AlbertaSchedule7Result | undefined {
     s7.otherNonDeductibleCrownChargeType3,
   ].filter((t) => present(t)) as string[];
 
-  const rawPartnerships: Ri[] = Array.isArray(s7.partnerships) ? s7.partnerships : [];
+  const rawPartnerships = Array.isArray(s7.partnerships) ? s7.partnerships : [];
   const partnerships = rawPartnerships.filter(
     (p) => present(p?.name) || present(p?.interestPercent) || present(p?.shareEligibleForCredit),
   );
 
-  const rawAdjustments: Ri[] = Array.isArray(s7.priorYearAdjustments) ? s7.priorYearAdjustments : [];
+  const rawAdjustments = Array.isArray(s7.priorYearAdjustments) ? s7.priorYearAdjustments : [];
   const priorYearAdjustments = rawAdjustments.filter(
     (a) => present(a?.priorProductionPeriodEnd) || present(a?.increase) || present(a?.decrease),
   );
@@ -131,12 +131,8 @@ export function assembleSchedule7(ri: Ri): AlbertaSchedule7Result | undefined {
             ...(present(a.priorProductionPeriodEnd)
               ? { priorProductionPeriodEnd: String(a.priorProductionPeriodEnd) }
               : {}),
-            ...(a.sourceOfAdjustment === '1' || a.sourceOfAdjustment === 1
-              ? { sourceOfAdjustment: 1 as const }
-              : {}),
-            ...(a.sourceOfAdjustment === '2' || a.sourceOfAdjustment === 2
-              ? { sourceOfAdjustment: 2 as const }
-              : {}),
+            ...(a.sourceOfAdjustment === '1' ? { sourceOfAdjustment: 1 as const } : {}),
+            ...(a.sourceOfAdjustment === '2' ? { sourceOfAdjustment: 2 as const } : {}),
             increase: num(a.increase),
             decrease: num(a.decrease),
             adjustmentNotEligibleForCredit: num(a.adjustmentNotEligibleForCredit),

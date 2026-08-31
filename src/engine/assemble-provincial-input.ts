@@ -20,9 +20,9 @@ import {
   resolveAlbertaTaxRates,
   SINGLE_JURISDICTION_ALBERTA_FACTOR,
 } from '@classytic/ca-tax/t2';
+import type { ComposedFederalInput } from './assemble-t2-input.js';
 import { assembleAt1Schedules } from './assemble-at1-schedules.js';
-
-type Ri = Record<string, any>;
+import type { ReturnInput } from './return-input-contract.js';
 
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v) || 0);
 
@@ -58,20 +58,22 @@ function albertaAllocationFrom(pes: Pe[]): {
 /**
  * Build the provincial engine input from the federal engine input + working return.
  * `federalEngineInput` is the T2-shaped input AFTER authoritative identity (isCcpc)
- * and prior-year openings have been applied, so its taxable income is the filed one.
+ * and prior-year openings have been applied, so its taxable income is the filed one
+ * (see `ComposedFederalInput`'s own doc comment for why this stays `unknown` at the
+ * parameter and gets one documented cast here, rather than a plain typed parameter).
  */
 export function assembleProvincialInput(
   program: string,
   federalEngineInput: unknown,
-  ri: Ri,
+  ri: ReturnInput,
   facts: { isCcpc: boolean },
 ): unknown {
-  const fed = (federalEngineInput ?? {}) as Ri;
+  const fed = (federalEngineInput ?? {}) as ComposedFederalInput;
   const federal = computeFederalT2(fed as unknown as FederalT2Input);
   const federalTaxableIncome = federal.taxableIncome;
   const activeBusinessIncome = num(fed.activeBusinessIncome);
   const period = fed.period;
-  const pes = ((fed.permanentEstablishments ?? []) as Pe[]).filter((pe) => pe?.province);
+  const pes = (fed.permanentEstablishments ?? []).filter((pe): pe is Pe => !!pe?.province);
 
   if (program === 'AT1') {
     const allocation = albertaAllocationFrom(pes);
@@ -106,7 +108,7 @@ export function assembleProvincialInput(
 
   // CO17 — Québec. SBD is fail-closed: only an eligible CCPC that also attests the
   // Québec paid-hours test gets the reduced rate; otherwise all income is general.
-  const qc = (ri.quebec ?? {}) as { sbdEligibleQC?: boolean; businessLimit?: unknown };
+  const qc = ri.quebec ?? {};
   const sbdEligible = facts.isCcpc && qc.sbdEligibleQC === true;
   const businessLimit = num(qc.businessLimit);
   return {

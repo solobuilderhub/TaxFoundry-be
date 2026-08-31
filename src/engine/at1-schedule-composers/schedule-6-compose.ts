@@ -41,8 +41,8 @@
  *   quarters: { days, rate }[]
  */
 import { computeAlbertaSchedule6, type AlbertaSchedule6Result } from '@classytic/ca-tax/t2';
+import type { AlbertaRoyaltyCredit6Values, ReturnInput } from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
 const yes = (v: unknown): boolean => v === 'yes';
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
@@ -54,13 +54,13 @@ const present = (v: unknown): boolean => v != null && v !== '';
  * — matching the `undefined`-return pattern the rest of
  * `assemble-at1-schedules.ts` uses (e.g. `scheduleTwenty`, `scheduleTen`).
  */
-export function assembleSchedule6(ri: Ri): AlbertaSchedule6Result | undefined {
-  const s6: Ri = ri.albertaRoyaltyCredit6 ?? {};
+export function assembleSchedule6(ri: ReturnInput): AlbertaSchedule6Result | undefined {
+  const s6: AlbertaRoyaltyCredit6Values = ri.albertaRoyaltyCredit6 ?? {};
 
-  const rawAllocations: Ri[] = Array.isArray(s6.allocations) ? s6.allocations : [];
+  const rawAllocations = Array.isArray(s6.allocations) ? s6.allocations : [];
   const allocations = rawAllocations.filter((a) => present(a?.name) || present(a?.allocatedAmount));
 
-  const rawQuarters: Ri[] = Array.isArray(s6.quarters) ? s6.quarters : [];
+  const rawQuarters = Array.isArray(s6.quarters) ? s6.quarters : [];
   const quarters = rawQuarters.filter((q) => present(q?.days) || present(q?.rate));
 
   const hasRoyalty = present(s6.albertaCrownRoyaltyIncurred);

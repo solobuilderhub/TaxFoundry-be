@@ -16,6 +16,18 @@ export const at1Transmitter: At1TransmitterInfo = {
   serialNumber: process.env.TRA_SERIAL ?? 'SR_DEV',
   thirdPartyIndicator: '1', // filed by a third party (the CPA firm via TaxFoundry)
   legalName: process.env.TRANSMITTER_LEGAL_NAME ?? 'TaxFoundry Inc.',
+  // Mandatory whenever thirdPartyIndicator is '1' (AT1 EDI schedule §3.3.6.1,
+  // lines 023/051/055/057/059/061) — absent here, TRA's real endpoint rejects
+  // with error 10025 ("missing one or more third party service provider
+  // mandatory line items"), confirmed live 2026-08-30.
+  organizationType: 'CORPORATION',
+  address: {
+    street: process.env.TRANSMITTER_ADDRESS_STREET ?? '10123 99 Street NW',
+    city: process.env.TRANSMITTER_ADDRESS_CITY ?? 'Edmonton',
+    province: process.env.TRANSMITTER_ADDRESS_PROVINCE ?? 'AB',
+    postalCode: process.env.TRANSMITTER_ADDRESS_POSTAL ?? 'T5J 3H1',
+    country: process.env.TRANSMITTER_ADDRESS_COUNTRY ?? 'CA',
+  },
   contact: {
     firstName: process.env.TRANSMITTER_CONTACT_FIRST ?? 'TaxFoundry',
     lastName: process.env.TRANSMITTER_CONTACT_LAST ?? 'Support',

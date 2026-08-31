@@ -182,7 +182,7 @@ export class At1SoapClient implements At1FilingGateway {
       );
     }
 
-    return interpretFileReturnResponse(parseFileReturnResponse(text));
+    return { ...interpretFileReturnResponse(parseFileReturnResponse(text)), rawResponseText: text };
   }
 }
 

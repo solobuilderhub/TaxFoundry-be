@@ -6,17 +6,33 @@
  * calculation and the frozen filing package are derived from ONE representation.
  * (The web keeps a live-preview projection, but the FILED result comes from here.)
  *
- * The stored return is a Mongo document (untyped Mixed), so this reads fields
- * defensively via `num()` rather than importing the web's `ReturnInput` type —
- * no cross-app type coupling, no duplicated storage contract.
+ * The stored return is a Mongo document (untyped Mixed) validated against
+ * `ReturnInput` (`return-input-contract.ts`) at the HTTP boundary before it
+ * ever reaches here — see `return-input-validation.ts`. Every field is still
+ * read defensively via `num()`, since the runtime document a given request
+ * carries can predate a schema change even after that validation.
  *
  * Whole dollars throughout (GIFI convention); `t2Engine.compute` converts to
  * cents at the tax-core boundary.
  */
 
+import type {
+  CapitalDisposition,
+  CcaClassInput,
+  PermanentEstablishment,
+  ReserveContinuityRow,
+} from '@classytic/ca-tax/t2';
 import { SCHEDULE_1_LINE_BY_NUMBER } from '@classytic/ca-tax/t2';
+import type {
+  At1DispositionCategory,
+  CcaClass,
+  Disposition,
+  PermanentEstablishmentValues,
+  ReserveRow,
+  ReturnInput,
+} from './return-input-contract.js';
 
-type Ri = Record<string, any>;
+type Ri = ReturnInput;
 type EngagementLike = { taxYearStart: unknown; taxYearEnd: unknown; program: string };
 
 /** Blank / non-numeric ⇒ 0. */
@@ -73,8 +89,8 @@ function scheduleOne(ri: Ri) {
 /** Schedule 8 — depreciable property by class (engine computes CCA/recapture/terminal loss). */
 function scheduleEight(ri: Ri) {
   const ccaClasses = (ri.cca?.classes ?? [])
-    .filter((c: Ri) => c?.ccaClass)
-    .map((c: Ri) => ({
+    .filter((c: CcaClass) => c?.ccaClass)
+    .map((c: CcaClass) => ({
       ccaClass: String(c.ccaClass),
       openingUCC: num(c.openingUCC),
       additions: num(c.additions),
@@ -88,7 +104,7 @@ function scheduleEight(ri: Ri) {
       // a class claimed provincially but not federally, so collapsing 0 into
       // blank made that case impossible to state. Blank still arrives as
       // `undefined` or `''` from the form and still means "maximum".
-      ...(c.claim != null && c.claim !== '' ? { claim: num(c.claim) } : {}),
+      ...(c.claim != null ? { claim: num(c.claim) } : {}),
     }));
   return ccaClasses.length ? { ccaClasses } : {};
 }
@@ -96,8 +112,8 @@ function scheduleEight(ri: Ri) {
 /** Schedule 6 — capital dispositions. */
 function scheduleSix(ri: Ri) {
   const dispositions = (ri.capitalGains?.dispositions ?? [])
-    .filter((d: Ri) => d?.description || d?.proceeds || d?.acb)
-    .map((d: Ri) => ({
+    .filter((d: Disposition) => d?.description || d?.proceeds || d?.acb)
+    .map((d: Disposition) => ({
       description: d.description,
       proceeds: num(d.proceeds),
       acb: num(d.acb),
@@ -154,8 +170,8 @@ function scheduleThree(ri: Ri) {
 function scheduleFour(ri: Ri) {
   const loss = ri.losses ?? {};
   const lossCarrybacks = (loss.carrybacks ?? [])
-    .filter((c: Ri) => c?.taxYearEnd && c?.amount)
-    .map((c: Ri) => ({ taxYearEnd: String(c.taxYearEnd), amount: num(c.amount) }));
+    .filter((c) => c?.taxYearEnd && c?.amount)
+    .map((c) => ({ taxYearEnd: String(c.taxYearEnd), amount: num(c.amount) }));
   return {
     ...(lossCarrybacks.length ? { lossCarrybacks } : {}),
     openingNonCapitalLoss: num(loss.nonCapitalOpening),
@@ -233,7 +249,7 @@ function eifelFacts(ri: Ri) {
 /** Schedule 7 — SBD inputs + Schedule 23 group + Schedule 27 ZETM. */
 function scheduleSeven(ri: Ri, bookNetIncome: number) {
   const sbd = ri.sbd ?? {};
-  const otherAssociates = (sbd.associated ?? []).filter((m: Ri) => m?.name || m?.allocatedLimit);
+  const otherAssociates = (sbd.associated ?? []).filter((m) => m?.name || m?.allocatedLimit);
   const businessLimit = sbd.businessLimit != null ? num(sbd.businessLimit) : 500000;
   return {
     activeBusinessIncome:
@@ -243,7 +259,7 @@ function scheduleSeven(ri: Ri, bookNetIncome: number) {
       ? {
           associatedMembers: [
             { name: 'This corporation', allocatedLimit: businessLimit },
-            ...otherAssociates.map((m: Ri) => ({
+            ...otherAssociates.map((m) => ({
               name: m.name,
               allocatedLimit: num(m.allocatedLimit),
             })),
@@ -253,9 +269,7 @@ function scheduleSeven(ri: Ri, bookNetIncome: number) {
     // Only pass an explicit prior-year taxable capital when the preparer entered
     // one on S7 — otherwise omit it so Schedule 33 (the `capital` slice) can derive
     // it. An unconditional 0 here would beat the S33 figure (`0 ?? s33` → 0).
-    ...(sbd.taxableCapital != null && sbd.taxableCapital !== ''
-      ? { taxableCapital: num(sbd.taxableCapital) }
-      : {}),
+    ...(sbd.taxableCapital != null ? { taxableCapital: num(sbd.taxableCapital) } : {}),
     aaii: num(sbd.aaii),
     ...(num(sbd.zetmIncome) > 0 ? { zetmIncome: num(sbd.zetmIncome) } : {}),
   };
@@ -295,7 +309,7 @@ function scheduleThirteen(ri: Ri) {
   const present = (v: unknown): boolean => v != null && v !== '';
   const rows = (ri.reserves?.rows ?? [])
     .filter(
-      (r: Ri) =>
+      (r: ReserveRow) =>
         r?.type ||
         r?.opening ||
         r?.transfer ||
@@ -304,7 +318,7 @@ function scheduleThirteen(ri: Ri) {
         present(r?.albertaTransfer) ||
         present(r?.albertaClosing),
     )
-    .map((r: Ri) => ({
+    .map((r: ReserveRow) => ({
       type: r.type,
       opening: num(r.opening),
       transfer: num(r.transfer),
@@ -344,11 +358,12 @@ function scheduleThirtyThree(ri: Ri) {
     'partnershipInterestAsset',
     'taxableIncomeEarnedInCanada',
   ];
-  const detail: Ri = {};
+  const detail: Record<string, number> = {};
   let any = false;
   for (const k of keys) {
-    if (c[k] != null && c[k] !== '') {
-      detail[k] = num(c[k]);
+    const v = c[k as keyof typeof c];
+    if (v != null) {
+      detail[k] = num(v);
       any = true;
     }
   }
@@ -389,7 +404,7 @@ function scheduleEightyEight(ri: Ri) {
     internetBusiness: {
       hasInternetBusiness: true,
       ...(ib.webPageCount != null ? { webPageCount: num(ib.webPageCount) } : {}),
-      urls: (ib.urls ?? []).map((u: Ri) => String(u?.url ?? '').trim()).filter(Boolean),
+      urls: (ib.urls ?? []).map((u) => String(u?.url ?? '').trim()).filter(Boolean),
       percentOfGrossRevenue: num(ib.percentOfGrossRevenue),
     },
   };
@@ -420,15 +435,152 @@ function scheduleOneOhOne(ri: Ri) {
   };
 }
 
+/**
+ * What `assembleT2Input` actually returns: `FederalT2Input`'s own fields,
+ * `period` (the engine wraps `periodStart`/`periodEnd` into this too — see
+ * that field's own note below), and the schedule-keyed additions each
+ * `scheduleN` helper above contributes. Declared explicitly, not inferred via
+ * `ReturnType<typeof assembleT2Input>` — several of the `scheduleN` helpers
+ * return from more than one `return` statement with a DIFFERENT shape per
+ * branch (e.g. `scheduleTwo` returns `{}` when there is nothing to report),
+ * which makes TypeScript infer the whole function's return type as a UNION
+ * of those shapes rather than one shape with optional fields; spreading many
+ * such unions into one object literal then loses fields a inference can't
+ * reliably carry through (confirmed: `fed.charitableDonations` came back
+ * "does not exist" under the inferred version, even though every branch that
+ * matters produces it). A hand-declared interface is also, per the review
+ * this fixes, the point: every composer gets one real, stable type to
+ * destructure against.
+ */
+export interface AssembledFederalInput {
+  period: { start: string; end: string; label: string };
+  periodStart: string;
+  periodEnd: string;
+  bookNetIncome: number;
+  province?: string;
+  permanentEstablishments?: PermanentEstablishment[];
+
+  // Schedule 1 — book-to-tax reconciliation.
+  schedule1Additions: { line: string; label: string; amount: number }[];
+  schedule1Deductions: { line: string; label: string; amount: number }[];
+
+  // Schedule 2 — charitable donations. NOT `donations.cultural` /
+  // `donations.ecological` split out — see this interface's own note on
+  // `ComposedFederalInput` below for why an AT1-only need for that split
+  // must read `ri.donations` directly instead.
+  charitableDonations?: number;
+  openingDonationPool?: number;
+
+  // Schedule 3 / Part IV / RDTOH + Schedule 53 GRIP.
+  portfolioDividendsReceived: number;
+  taxableDividendsPaid: number;
+  openingGrip: number;
+  eligibleDividendsReceived?: number;
+  eligibleDividendsDesignated?: number;
+
+  // Schedule 4 — loss pools + carry-back.
+  lossCarrybacks?: { taxYearEnd: string; amount: number }[];
+  openingNonCapitalLoss: number;
+  nonCapitalLossToApply: number;
+  openingNetCapitalLoss: number;
+  netCapitalLossToApply: number;
+  openingFarmLoss?: number;
+  farmLossToApply?: number;
+  openingRestrictedFarmLoss?: number;
+  restrictedFarmLossToApply?: number;
+  farmingIncome?: number;
+  openingLimitedPartnershipLoss?: number;
+  limitedPartnershipLossToApply?: number;
+  partnershipIncome?: number;
+  atRiskAmount?: number;
+
+  // Schedule 6 — capital dispositions. `category` is AT1-only (federal Schedule
+  // 6 ignores it) — see `Disposition`'s own doc comment in return-input-contract.ts.
+  capitalDispositions?: (CapitalDisposition & { category?: At1DispositionCategory })[];
+
+  // Schedule 7 — SBD inputs + Schedule 23 group + Schedule 27 ZETM.
+  activeBusinessIncome: number;
+  businessLimit: number;
+  associatedMembers?: { name?: string; allocatedLimit: number }[];
+  taxableCapital?: number;
+  aaii: number;
+  zetmIncome?: number;
+
+  // Schedule 8 — depreciable property by class.
+  ccaClasses?: CcaClassInput[];
+
+  // Schedule 21 — foreign tax credit.
+  foreignNonBusinessIncome?: number;
+  foreignNonBusinessTaxPaid?: number;
+  foreignBusinessIncome?: number;
+  foreignBusinessTaxPaid?: number;
+  openingBusinessFtcPool?: number;
+
+  // Schedule 31 — SR&ED ITC.
+  sredQualifiedExpenditures?: number;
+  openingItcPool?: number;
+
+  // Schedule 13 (federal Part 2) — continuity of reserves. `albertaOpening` /
+  // `albertaTransfer` / `albertaClosing` have no federal meaning — see this
+  // field's own note in `scheduleThirteen` above.
+  reserveContinuity?: (ReserveContinuityRow & {
+    albertaOpening?: number;
+    albertaTransfer?: number;
+    albertaClosing?: number;
+  })[];
+
+  // Schedule 33 — taxable capital employed in Canada.
+  taxableCapitalDetail?: Record<string, number>;
+
+  // Schedule 43 — Part VI.1 on dividends paid on taxable preferred shares.
+  preferredShareDividends?: {
+    shortTermPreferredDividends: number;
+    otherPreferredDividends: number;
+    electedUnder191_2?: boolean;
+    priorYearPreferredDividends?: number;
+    isAssociated?: boolean;
+    allocatedAllowance?: number;
+  };
+
+  // EIFEL (s.18.2) excluded-entity facts.
+  eifel?: {
+    netInterestAndFinancingExpenses?: number;
+    groupTaxableCapital?: number;
+    domesticExceptionApplies?: boolean;
+  };
+
+  // Schedule 88 — internet business activities.
+  internetBusiness?: {
+    hasInternetBusiness: boolean;
+    webPageCount?: number;
+    urls: string[];
+    percentOfGrossRevenue: number;
+  };
+
+  // Schedule 101 / 24 — first return after incorporation, amalgamation or wind-up.
+  firstReturn?: {
+    isFirstReturn: boolean;
+    event?: 'incorporation' | 'amalgamation' | 'windUpOfSubsidiary';
+    eventDate?: string;
+    predecessorBusinessNumbers?: string[];
+    openingAssets: number;
+    openingLiabilities: number;
+    openingEquity: number;
+  };
+
+  // Division C — s.112 dividend deduction only.
+  divisionCDeductions: { label: string; amount: number }[];
+}
+
 /** Assemble the engine's `FederalT2Input` (+ period) from the stored working return. */
-export function assembleT2Input(ri: Ri, engagement: EngagementLike): Record<string, unknown> {
+export function assembleT2Input(ri: Ri, engagement: EngagementLike): AssembledFederalInput {
   const returnInput: Ri = ri ?? {};
   const bookNetIncome = bookNetIncomeOf(returnInput);
   const province = returnInput.identification?.province;
 
   const permanentEstablishments = (returnInput.provincialAllocation?.establishments ?? [])
-    .filter((pe: Ri) => pe?.province)
-    .map((pe: Ri) => ({
+    .filter((pe: PermanentEstablishmentValues) => pe?.province)
+    .map((pe: PermanentEstablishmentValues) => ({
       province: String(pe.province),
       grossRevenue: num(pe.grossRevenue),
       salariesWages: num(pe.salariesWages),
@@ -462,3 +614,17 @@ export function assembleT2Input(ri: Ri, engagement: EngagementLike): Record<stri
     ...divisionC(returnInput),
   };
 }
+
+/**
+ * What every AT1 composer (`assemble-at1-schedules.ts` and its
+ * `at1-schedule-composers/*` siblings) actually receives as `fed`:
+ * `AssembledFederalInput`, except `period` — `coerceEngineInput`
+ * (`engagement-compute.service.ts`) rewrites `period.start`/`period.end`
+ * from the ISO strings this file produces into real `Date` instances before
+ * any composer runs, because `at1Engine.validate` (downstream) requires
+ * `Date`, not string. One field, so this is a targeted `Omit` + override
+ * rather than modelling the whole coercion step in the type system.
+ */
+export type ComposedFederalInput = Omit<AssembledFederalInput, 'period'> & {
+  period?: { start: Date; end: Date; label: string };
+};

@@ -138,7 +138,10 @@ export async function transmitAt1(params: TransmitAt1Params): Promise<TransmitAt
         {
           status: result.status === 'accepted' ? 'accepted' : 'rejected',
           confirmationNumber: result.confirmationNumber,
-          rawResponse: result,
+          // The ACTUAL wire bytes when the gateway supplied them (the real SOAP
+          // client always does) — falls back to the interpreted summary only
+          // for gateways that never had raw bytes to give (e.g. test fakes).
+          rawResponse: result.rawResponseText ?? result,
         },
         session,
       );

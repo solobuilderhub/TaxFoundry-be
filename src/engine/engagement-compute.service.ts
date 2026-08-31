@@ -26,6 +26,7 @@ import { assembleT2Input } from './assemble-t2-input.js';
 import { runEngagementCompute } from './compute.js';
 import type { EngineComputeOutput } from './compute-types.js';
 import { applyPriorOpenings, resolvePriorYearOpenings } from './prior-year-openings.service.js';
+import { assertReturnInputShape } from './return-input-validation.js';
 import type { ComputationSnapshot } from './snapshot.js';
 import { verifyT2Reproducible } from './t2-compute.js';
 
@@ -204,7 +205,15 @@ export async function computeEngagementT2(
   // so the calculation and the frozen filing package derive from one representation
   // (a caller can no longer send an engine input that disagrees with stored data).
   // Legacy engine-shaped payloads are still accepted for direct API / tooling.
-  const structuredReturn = extractStructuredReturn(params.input);
+  const extractedReturn = extractStructuredReturn(params.input);
+  let structuredReturn: Record<string, unknown> | null = null;
+  if (extractedReturn) {
+    try {
+      structuredReturn = assertReturnInputShape(extractedReturn);
+    } catch (err) {
+      throw createError(400, `Malformed return input: ${(err as Error).message}`);
+    }
+  }
   let assembledInput: unknown;
   if (structuredReturn) {
     await engagementYearRepository.update(String(engagement._id), {
@@ -272,6 +281,7 @@ export async function computeEngagementT2(
           ...(frozenFilingInput !== undefined ? { filingInput: frozenFilingInput } : {}),
           identity: frozenIdentity,
           ...(out.schedulePayloads ? { schedulePayloads: out.schedulePayloads } : {}),
+          ...(out.issues && out.issues.length > 0 ? { issues: out.issues } : {}),
           // Fileable only when a T2 was computed from the server-assembled structured
           // return (calc + filing derive from ONE source). AT1 always fileable.
           fileable: engagement.program !== 'T2' || structuredReturn !== null,

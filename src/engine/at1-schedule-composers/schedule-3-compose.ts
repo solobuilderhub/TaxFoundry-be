@@ -36,8 +36,8 @@
  *   apitcExpired                                                    (APITC)
  */
 import { computeSchedule3, type Schedule3Result } from '@classytic/ca-tax/t2';
+import type { AlbertaOtherCredits3Values, ReturnInput } from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
@@ -48,8 +48,8 @@ const present = (v: unknown): boolean => v != null && v !== '';
  * Schedule 3 to file, matching the `undefined`-return pattern the rest of
  * `assemble-at1-schedules.ts` uses (e.g. `scheduleTwenty`, `scheduleTen`).
  */
-export function assembleSchedule3(ri: Ri): Schedule3Result | undefined {
-  const s3: Ri = ri.albertaOtherCredits3 ?? {};
+export function assembleSchedule3(ri: ReturnInput): Schedule3Result | undefined {
+  const s3: AlbertaOtherCredits3Values = ri.albertaOtherCredits3 ?? {};
 
   const hasItc =
     present(s3.itcCertificatesIssued) ||

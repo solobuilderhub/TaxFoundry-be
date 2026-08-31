@@ -62,6 +62,11 @@ const computedReturnSchema = new mongoose.Schema(
     // about the schedules behind them, so reconstructing from it files a jacket
     // and nothing else.
     schedulePayloads: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Validation notes the engine's own schedules raised while computing this
+    // return (a fail-closed default, a capped claim, a missing input) — see
+    // `AlbertaReturnResult.issues` in ca-tax. Absent/empty means no schedule
+    // had anything to flag, not that nothing was checked.
+    issues: { type: [String], default: undefined },
     // Only returns computed from the SERVER-ASSEMBLED structured return are
     // fileable — a legacy engine-shaped payload (calc input separate from the
     // frozen filing input) is non-fileable and the transmit path refuses it.

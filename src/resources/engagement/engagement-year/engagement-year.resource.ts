@@ -12,14 +12,17 @@ import { getOrgId, getUserId } from '@classytic/arc/scope';
 import { QueryParser } from '@classytic/mongokit';
 import { createError } from '@classytic/repo-core/errors';
 import { createAdapter } from '#shared/adapter.js';
+import type { WithId } from '#shared/db.js';
 import { orgStaffPermissions, requireOrgManager } from '#shared/permissions.js';
 import { flexibleMultiTenantPreset } from '#shared/presets/flexible-multi-tenant.js';
 import { autoFillEngagement } from '../../../afr/afr.service.js';
 import { prepareAt1NetFile } from '../../../engine/at1-netfile.service.js';
+import { CcaPreviewRequestSchema, previewCcaClasses } from '../../../engine/cca-preview.service.js';
 import {
   computeEngagementT2,
   verifyEngagementReproducible,
 } from '../../../engine/engagement-compute.service.js';
+import { assertReturnInputShape } from '../../../engine/return-input-validation.js';
 import { prepareCo17 } from '../../../filing/co17-return.service.js';
 import { prepareT2Cif } from '../../../filing/t2-cif.service.js';
 import { recordT183Authorization } from '../../../filing/t183-authorization.service.js';
@@ -64,12 +67,42 @@ const engagementYearResource = defineResource<EngagementYearDocument>({
       handler: async (id, data, req) => {
         const orgId = getOrgId(req.scope);
         if (!orgId) throw createError(403, 'Organization context required');
-        const returnInput = (data as { returnInput?: unknown }).returnInput ?? data;
+        const rawReturnInput = (data as { returnInput?: unknown }).returnInput ?? data;
+        let returnInput: Record<string, unknown>;
+        try {
+          returnInput = assertReturnInputShape(rawReturnInput);
+        } catch (err) {
+          throw createError(400, `Malformed return input: ${(err as Error).message}`);
+        }
         await engagementYearRepository.findOneAndUpdate(
           { _id: id, organizationId: orgId },
           { returnInput },
         );
         return { ok: true };
+      },
+    },
+    'preview-cca': {
+      description:
+        'Live CCA preview for the schedule-editor summary strip — runs the real engine calc, not a client-side approximation',
+      handler: async (id, data, req) => {
+        const orgId = getOrgId(req.scope);
+        if (!orgId) throw createError(403, 'Organization context required');
+        const engagement = (await engagementYearRepository.getOne({
+          _id: id,
+          organizationId: orgId,
+        })) as WithId<EngagementYearDocument> | null;
+        if (!engagement) throw createError(404, 'Engagement year not found');
+        let request: ReturnType<typeof CcaPreviewRequestSchema.parse>;
+        try {
+          request = CcaPreviewRequestSchema.parse(data);
+        } catch (err) {
+          throw createError(400, `Malformed CCA preview request: ${(err as Error).message}`);
+        }
+        const previews = previewCcaClasses({
+          taxYearEnd: request.taxYearEnd ?? engagement.taxYearEnd,
+          classes: request.classes,
+        });
+        return { previews };
       },
     },
     'auto-fill': {

@@ -32,9 +32,6 @@
  *   - Schedule 18's ABIL entries, s.34.2 figures, donated-property gains and
  *     capital-gains reserve continuity — none of this is modelled federally
  *     either. Basic Schedule 18 (six category totals) IS wired.
- * Schedule 20's second continuity (gifts to Canada/province, cultural
- * property, ecological land) has no federal source and no UI yet — also
- * omitted, and worth flagging as a smaller follow-up.
  */
 import {
   type AlbertaReturnInput,
@@ -48,6 +45,7 @@ import {
   computeAlbertaSchedule18,
   computeDonationMaximum,
   computeLimitedPartnershipLosses,
+  computeLossCarryback,
   computeLossContinuity,
   computeNonCapitalLossByYearOfOrigin,
   computeOtherLossByYearOfOrigin,
@@ -55,9 +53,11 @@ import {
   type FederalT2Result,
   type IegAgreementInput,
   reconcileAlbertaNetIncome,
+  type Schedule12FilingInput,
   type Schedule12Result,
   schedule12LossDeductions,
 } from '@classytic/ca-tax/t2';
+import type { ComposedFederalInput } from './assemble-t2-input.js';
 import { assembleSchedule3 } from './at1-schedule-composers/schedule-3-compose.js';
 import { assembleSchedule4 } from './at1-schedule-composers/schedule-4-compose.js';
 import { assembleSchedule5 } from './at1-schedule-composers/schedule-5-compose.js';
@@ -67,15 +67,29 @@ import { assembleSchedule8 } from './at1-schedule-composers/schedule-8-compose.j
 import { assembleSchedule9 } from './at1-schedule-composers/schedule-9-compose.js';
 import { assembleSchedule11 } from './at1-schedule-composers/schedule-11-compose.js';
 import { assembleSchedule15 } from './at1-schedule-composers/schedule-15-compose.js';
+import type {
+  AlbertaAssociatedCorpMember,
+  AlbertaContinuityValues,
+  AlbertaIegValues,
+  AlbertaSbdValues,
+  AlbertaValues,
+  CcaClass,
+  IegAgreementMember,
+  IegGroupMember,
+  ReturnInput,
+} from './return-input-contract.js';
 
-type Ri = Record<string, any>;
+/** `fed` — the assembled federal engine input every composer reads from. */
+type Fed = ComposedFederalInput;
+/** `ri` — the full structured working return. */
+type Ri = ReturnInput;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
 const yes = (v: unknown): boolean => v === 'yes';
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
 
 /** 000060 / 000061 — TRA forbids filing 13/17/18 unless divergence is declared. */
-function divergenceFlags(ab: Ri) {
+function divergenceFlags(ab: AlbertaValues) {
   return {
     reportsDifferentAlbertaIncome: yes(ab.reportsDifferentAlbertaIncome),
     electsDifferentDiscretionaryAmounts: yes(ab.electsDifferentDiscretionaryAmounts),
@@ -92,15 +106,15 @@ function divergenceFlags(ab: Ri) {
  */
 function albertaCcaOverrides(ri: Ri) {
   return (ri.cca?.classes ?? [])
-    .filter((c: Ri) => c?.ccaClass && (present(c.albertaOpeningUCC) || present(c.albertaClaim)))
-    .map((c: Ri) => ({
+    .filter((c: CcaClass) => c?.ccaClass && (present(c.albertaOpeningUCC) || present(c.albertaClaim)))
+    .map((c: CcaClass) => ({
       ccaClass: String(c.ccaClass),
       ...(present(c.albertaOpeningUCC) ? { openingUCC: num(c.albertaOpeningUCC) } : {}),
       ...(present(c.albertaClaim) ? { claim: num(c.albertaClaim) } : {}),
     }));
 }
 
-function scheduleThirteen(fed: Ri, ab: Ri, ri: Ri) {
+function scheduleThirteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
   const federalClasses = fed.ccaClasses ?? [];
   if (federalClasses.length === 0) return undefined;
   const albertaOverrides = albertaCcaOverrides(ri);
@@ -128,8 +142,8 @@ function scheduleThirteen(fed: Ri, ab: Ri, ri: Ri) {
  * for those rows `federalReserves` always reads as 0 and the Alberta override
  * fields are effectively the only source of the figure.
  */
-function scheduleSeventeen(fed: Ri, ab: Ri) {
-  const rows: Ri[] = fed.reserveContinuity ?? [];
+function scheduleSeventeen(fed: Fed, ab: AlbertaValues) {
+  const rows = fed.reserveContinuity ?? [];
   if (rows.length === 0) return undefined;
   const federalReserves: Record<string, { opening: number; transfer: number; closing: number }> =
     {};
@@ -152,8 +166,8 @@ function scheduleSeventeen(fed: Ri, ab: Ri) {
   }
   if (Object.keys(federalReserves).length === 0) return undefined;
   const result = computeAlbertaSchedule17({
-    federalReserves: federalReserves as never,
-    ...(Object.keys(albertaReserves).length ? { albertaReserves: albertaReserves as never } : {}),
+    federalReserves,
+    ...(Object.keys(albertaReserves).length ? { albertaReserves } : {}),
     ...divergenceFlags(ab),
   });
   return result.formPermitted ? result : undefined;
@@ -169,22 +183,22 @@ function scheduleSeventeen(fed: Ri, ab: Ri) {
  * this schedule. ABIL / s.34.2 / donated-property / capital-gains-reserve
  * figures are not modelled on the federal side and are not wired here.
  */
-function scheduleEighteen(fed: Ri, ab: Ri) {
-  const dispositions: Ri[] = fed.capitalDispositions ?? [];
+function scheduleEighteen(fed: Fed, ab: AlbertaValues) {
+  const dispositions = fed.capitalDispositions ?? [];
   const categorized = dispositions.filter((d) => d.category);
   if (categorized.length === 0) return undefined;
 
   const federalCategories: Record<string, { proceeds: number; acb: number; outlays: number }> = {};
   for (const d of categorized) {
-    const bucket = federalCategories[d.category] ?? { proceeds: 0, acb: 0, outlays: 0 };
+    const bucket = federalCategories[d.category as string] ?? { proceeds: 0, acb: 0, outlays: 0 };
     bucket.proceeds += num(d.proceeds);
     bucket.acb += num(d.acb);
     bucket.outlays += num(d.outlays);
-    federalCategories[d.category] = bucket;
+    federalCategories[d.category as string] = bucket;
   }
 
   const result = computeAlbertaSchedule18({
-    federalCategories: federalCategories as never,
+    federalCategories,
     ...divergenceFlags(ab),
   });
   return result.formPermitted ? result : undefined;
@@ -199,15 +213,15 @@ function scheduleEighteen(fed: Ri, ab: Ri) {
  * income that attracts the small-business rate; it does not itself change
  * what tax is payable.
  */
-function scheduleOne(fed: Ri, ri: Ri, albertaTaxableIncome: number, defaultBusinessLimit: number) {
-  const ab = ri.alberta ?? {};
+function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusinessLimit: number) {
+  const ab: AlbertaSbdValues = ri.albertaSbd ?? {};
   if (!ab.corporationStatus) return undefined; // no eligibility answer ⇒ nothing to claim
   const sbd = ri.sbd ?? {};
   // Reuses the FEDERAL associated-group facts (same corporations, same ITA
   // test) — there is no AT1-specific association UI, and the group a
   // corporation is associated with for SBD purposes does not change by
   // jurisdiction.
-  const isAssociated = (sbd.associated ?? []).some((m: Ri) => m?.name || m?.allocatedLimit);
+  const isAssociated = (sbd.associated ?? []).some((m) => m?.name || m?.allocatedLimit);
 
   const result = computeAlbertaSbd(
     {
@@ -223,22 +237,140 @@ function scheduleOne(fed: Ri, ri: Ri, albertaTaxableIncome: number, defaultBusin
     defaultBusinessLimit,
   );
 
+  // Area A — the associated group's own allocation table (041/043/045),
+  // filed alongside line 001. Re-entered by the preparer, not joined against
+  // `sbd.associated` by array index — see this schedule's own doc comment.
+  const agreementMembers = (ab.associatedCorpAgreement ?? [])
+    .filter((m: AlbertaAssociatedCorpMember) => m?.name || m?.albertaCan || m?.allocatedAmount != null)
+    .map((m: AlbertaAssociatedCorpMember) => ({
+      name: m?.name,
+      albertaCan: m?.albertaCan,
+      allocatedAmount: m?.allocatedAmount != null ? num(m.allocatedAmount) : undefined,
+    }));
+
   return {
     result,
     activeBusinessIncome: num(fed.activeBusinessIncome),
     albertaTaxableIncome,
     ...(ab.royaltyTaxDeduction != null ? { royaltyTaxDeduction: num(ab.royaltyTaxDeduction) } : {}),
+    ...(agreementMembers.length > 0 ? { agreementMembers } : {}),
   };
 }
 
 // ── Schedule 10 / 21 — loss carry-back and continuity ────────────────────
 
-/** Schedule 10 reuses the federal non-capital carry-back request verbatim — same engine, same figures. */
-function scheduleTen(federal: FederalT2Result) {
-  if (!federal.lossCarryback) return undefined;
+/**
+ * Schedule 10 has two columns: non-capital reuses the federal carry-back
+ * request verbatim (same engine, same figures — federal T2 has no separate
+ * request of its own). Capital has NO federal equivalent to reuse at all —
+ * neither this engine's federal T2 nor its Schedule 4 accepts a net-capital
+ * carry-back request — so it is built here from the Alberta-only
+ * `albertaContinuity.capitalCarrybacks` input against the current-year
+ * net-capital loss federal already computed (Schedule 6 → federal Schedule 4,
+ * confirmed by TRA's own Fall 2026 test-case text to equal Alberta's).
+ * `computeLossCarryback` is the same jurisdiction-agnostic primitive federal
+ * uses for its own non-capital request — see `loss-carryback.ts`.
+ */
+/**
+ * `otherLoss`'s two checkboxes (023 restricted farm / 025 listed personal
+ * property) are NOT mutually exclusive — confirmed against TRA's own
+ * Chapter 3 spec, not just the printed PDF. When both are checked, the
+ * shared column's current-year-loss is the SUM of both pools' own current-
+ * year losses (021097 + 021117).
+ */
+function scheduleTen(federal: FederalT2Result, ri: Ri) {
+  const c: AlbertaContinuityValues = ri.albertaContinuity ?? {};
+  const nonCapital = federal.lossCarryback;
+
+  const rowsFrom = (
+    field: 'capitalCarrybacks' | 'farmCarrybacks' | 'otherLossCarrybacks',
+  ): { taxYearEnd: string; amount: number }[] =>
+    (c[field] ?? [])
+      .filter((r) => present(r?.amount))
+      .map((r) => ({ taxYearEnd: String(r.taxYearEnd), amount: num(r.amount) }));
+
+  const capitalCarrybackRows = rowsFrom('capitalCarrybacks');
+  const capital =
+    capitalCarrybackRows.length > 0
+      ? computeLossCarryback({
+          currentYearLoss: federal.losses.netCapital.currentYearLoss,
+          carrybacks: capitalCarrybackRows,
+        })
+      : undefined;
+
+  const farmCarrybackRows = rowsFrom('farmCarrybacks');
+  const farmCurrentYearLoss = present(c.farmCurrentYearLoss)
+    ? num(c.farmCurrentYearLoss)
+    : federal.losses.farm.currentYearLoss;
+  const farm =
+    farmCarrybackRows.length > 0
+      ? computeLossCarryback({ currentYearLoss: farmCurrentYearLoss, carrybacks: farmCarrybackRows })
+      : undefined;
+
+  const includesRestrictedFarm = yes(c.otherLossIncludesRestrictedFarm);
+  const includesListedPersonal = yes(c.otherLossIncludesListedPersonal);
+  const restrictedFarmCurrentYearLoss = present(c.restrictedFarmCurrentYearLoss)
+    ? num(c.restrictedFarmCurrentYearLoss)
+    : federal.losses.restrictedFarm.currentYearLoss;
+  const lppCurrentYearLoss = num(c.lppCurrentYearLoss); // no federal source at all — direct AT1-only entry
+  const otherLossCarrybackRows = rowsFrom('otherLossCarrybacks');
+  const otherLossResult =
+    (includesRestrictedFarm || includesListedPersonal) && otherLossCarrybackRows.length > 0
+      ? computeLossCarryback({
+          currentYearLoss:
+            (includesRestrictedFarm ? restrictedFarmCurrentYearLoss : 0) +
+            (includesListedPersonal ? lppCurrentYearLoss : 0),
+          carrybacks: otherLossCarrybackRows,
+        })
+      : undefined;
+  const otherLoss = otherLossResult
+    ? { includesRestrictedFarm, includesListedPersonal, result: otherLossResult }
+    : undefined;
+
+  // When BOTH boxes are checked, Schedule 10 reports one COMBINED figure —
+  // TRA's spec doesn't attribute it back to the two pools' own separate
+  // Schedule 21 continuities, so this splits the total carried back
+  // proportionally to each pool's share of the combined current-year loss
+  // (remainder to restricted farm, matching the form's own 023-before-025
+  // order) — a considered choice, not derived from the spec, which is
+  // silent on this specific sub-allocation.
+  let restrictedFarmCarriedBack: number | undefined;
+  let lppCarriedBack: number | undefined;
+  if (otherLossResult) {
+    const combinedBase =
+      (includesRestrictedFarm ? restrictedFarmCurrentYearLoss : 0) +
+      (includesListedPersonal ? lppCurrentYearLoss : 0);
+    if (includesRestrictedFarm && includesListedPersonal && combinedBase > 0) {
+      lppCarriedBack = Math.round(
+        (lppCurrentYearLoss / combinedBase) * otherLossResult.totalCarriedBack,
+      );
+      restrictedFarmCarriedBack = otherLossResult.totalCarriedBack - lppCarriedBack;
+    } else if (includesRestrictedFarm) {
+      restrictedFarmCarriedBack = otherLossResult.totalCarriedBack;
+    } else if (includesListedPersonal) {
+      lppCarriedBack = otherLossResult.totalCarriedBack;
+    }
+  }
+
+  if (!nonCapital && !capital && !farm && !otherLoss) return undefined;
+
+  // Every column's preceding-year date fields (003/005/007) are shared on
+  // the live form, so they need the same three years — whichever column
+  // has data first supplies the dates.
+  const precedingYearEnds = (nonCapital ?? farm ?? otherLoss?.result ?? capital)!.carrybacks.map(
+    (cb) => cb.taxYearEnd,
+  );
+
   return {
-    nonCapital: federal.lossCarryback,
-    precedingYearEnds: federal.lossCarryback.carrybacks.map((c) => c.taxYearEnd),
+    ...(nonCapital ? { nonCapital } : {}),
+    ...(farm ? { farm } : {}),
+    ...(otherLoss ? { otherLoss } : {}),
+    ...(capital ? { capital } : {}),
+    precedingYearEnds,
+    // Schedule 21 override inputs — see the split note above.
+    ...(farm ? { farmCarriedBack: farm.totalCarriedBack } : {}),
+    ...(restrictedFarmCarriedBack !== undefined ? { restrictedFarmCarriedBack } : {}),
+    ...(lppCarriedBack !== undefined ? { lppCarriedBack } : {}),
   };
 }
 
@@ -255,7 +387,33 @@ function scheduleTen(federal: FederalT2Result) {
  * has no federal pairing at all, so its full continuity is Alberta-only input
  * (unchanged, see below).
  */
-function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedule12Result) {
+function scheduleTwentyOne(
+  federal: FederalT2Result,
+  ri: Ri,
+  schedule12: Schedule12Result,
+  /**
+   * Total net-capital loss carried back this year (Schedule 10's capital
+   * column, computed by `scheduleTen`). `federal.losses.netCapital.carriedBack`
+   * is always 0 — federal has no net-capital carry-back request of its own —
+   * so without this override the Alberta continuity would silently ignore a
+   * capital carry-back that was actually requested and ship a closing balance
+   * that hasn't been reduced by it.
+   */
+  capitalCarriedBack?: number,
+  /**
+   * Total farm / restricted-farm / listed-personal-property loss carried
+   * back this year (Schedule 10's farm and "other loss" columns, computed
+   * by `scheduleTen`). Federal's own `carriedBack` for these pools is
+   * always 0 — same reasoning as `capitalCarriedBack` above. The
+   * restricted-farm/LPP split, when Schedule 10's shared "other loss"
+   * column covers both in the same year, is `scheduleTen`'s own considered
+   * allocation (proportional to each pool's current-year loss) — TRA's
+   * spec doesn't attribute the combined figure back to the two pools.
+   */
+  farmCarriedBack?: number,
+  restrictedFarmCarriedBack?: number,
+  lppCarriedBack?: number,
+) {
   const c = ri.albertaContinuity;
   if (!c) return undefined; // no Alberta loss history entered ⇒ nothing to file
 
@@ -275,9 +433,11 @@ function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedul
     // Override the current-year LOSS AMOUNT with Alberta's own figure when one
     // exists — the continuity table's "current year loss" row must agree with
     // whatever Schedule 21 line 021 states, or the schedule contradicts itself
-    // on the same fact. Only non-capital has a computed Alberta-specific
-    // figure today (`albertaCurrentYearLoss`); the others still reuse
-    // federal's, per pool-specific notes below.
+    // on the same fact. Non-capital's is computed automatically
+    // (`albertaCurrentYearLoss`, from Schedule 12's reconciliation);
+    // farm/restricted-farm take a direct AT1-only entry instead, since no
+    // federal input breaks a loss down by farm activity for anything to
+    // derive it from; capital has none — see pool-specific notes below.
     currentYearLossOverride?: number,
     // The AT1-only slice for this pool (undefined for a pool with no prefix
     // entered — everything then defaults to federal / nil, same as before).
@@ -328,8 +488,8 @@ function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedul
     currentYearLoss: currentYearNonCapitalLoss,
     currentYearCarriedBack: nonCapital.carriedBack,
     priorVintages: nonCapitalVintages
-      .filter((v: Ri) => present(v?.yearsAgo))
-      .map((v: Ri) => ({
+      .filter((v) => present(v?.yearsAgo))
+      .map((v) => ({
         yearsAgo: num(v.yearsAgo),
         ...(present(v.taxYearEnd) ? { taxYearEnd: String(v.taxYearEnd) } : {}),
         balanceAtBeginning: num(v.balanceAtBeginning),
@@ -347,8 +507,8 @@ function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedul
     otherLossVintages.length > 0
       ? computeOtherLossByYearOfOrigin(
           otherLossVintages
-            .filter((v: Ri) => present(v?.yearIndex))
-            .map((v: Ri) => ({
+            .filter((v) => present(v?.yearIndex))
+            .map((v) => ({
               yearIndex: num(v.yearIndex),
               farmLosses: num(v.farmLosses),
               restrictedFarmLosses: num(v.restrictedFarmLosses),
@@ -365,31 +525,51 @@ function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedul
     // The net capital loss for the year is confirmed the SAME as federal by
     // TRA's own Fall 2026 test case text ("the current year net capital loss
     // should be the same as federal") — reusing federal's figure here is
-    // correct, not a shortcut.
-    capital: carryForward(num(c.capitalOpening), federal.losses.netCapital, undefined, {
-      applied: c.capitalApplied,
-      expired: c.capitalExpired,
-      windUpTransfer: c.capitalWindUpTransfer,
-      section80Adjustment: c.capitalSection80Adjustment,
-      otherAdjustments: c.capitalOtherAdjustments,
-    }),
-    // Farm / restricted-farm's CURRENT-YEAR LOSS AMOUNT still reuses federal's
-    // (no Alberta-specific farm-loss figure is computed anywhere yet, unlike
-    // non-capital's `albertaCurrentYearLoss` — a narrower, documented gap)
-    // — but applied/expired/wind-up/s.80/other-adjustments are now overridable
-    // the same as every other pool, since those genuinely have no dependency
-    // on that missing figure.
-    farm: carryForward(num(c.farmOpening), federal.losses.farm, undefined, {
-      applied: c.farmApplied,
-      expired: c.farmExpired,
-      windUpTransfer: c.farmWindUpTransfer,
-      section80Adjustment: c.farmSection80Adjustment,
-      otherAdjustments: c.farmOtherAdjustments,
-    }),
+    // correct, not a shortcut. `carriedBack` is NOT reused from federal,
+    // though: federal has no net-capital carry-back request at all (always
+    // 0), so it is overridden with Schedule 10's Alberta-only capital column
+    // total whenever one was actually requested — see `capitalCarriedBack`'s
+    // doc comment above.
+    capital: carryForward(
+      num(c.capitalOpening),
+      capitalCarriedBack !== undefined
+        ? { ...federal.losses.netCapital, carriedBack: capitalCarriedBack }
+        : federal.losses.netCapital,
+      undefined,
+      {
+        applied: c.capitalApplied,
+        expired: c.capitalExpired,
+        windUpTransfer: c.capitalWindUpTransfer,
+        section80Adjustment: c.capitalSection80Adjustment,
+        otherAdjustments: c.capitalOtherAdjustments,
+      },
+    ),
+    // Farm / restricted-farm's CURRENT-YEAR LOSS AMOUNT defaults to federal's
+    // but, like non-capital, is overridable — no federal input in this engine
+    // breaks a loss down by farm activity, so unlike non-capital (derived from
+    // Schedule 12's reconciliation) this can only be a direct AT1-only entry.
+    farm: carryForward(
+      num(c.farmOpening),
+      farmCarriedBack !== undefined
+        ? { ...federal.losses.farm, carriedBack: farmCarriedBack }
+        : federal.losses.farm,
+      present(c.farmCurrentYearLoss) ? num(c.farmCurrentYearLoss) : undefined,
+      {
+        applied: c.farmApplied,
+        expired: c.farmExpired,
+        windUpTransfer: c.farmWindUpTransfer,
+        section80Adjustment: c.farmSection80Adjustment,
+        otherAdjustments: c.farmOtherAdjustments,
+      },
+    ),
     restrictedFarm: carryForward(
       num(c.restrictedFarmOpening),
-      federal.losses.restrictedFarm,
-      undefined,
+      restrictedFarmCarriedBack !== undefined
+        ? { ...federal.losses.restrictedFarm, carriedBack: restrictedFarmCarriedBack }
+        : federal.losses.restrictedFarm,
+      present(c.restrictedFarmCurrentYearLoss)
+        ? num(c.restrictedFarmCurrentYearLoss)
+        : undefined,
       {
         applied: c.restrictedFarmApplied,
         expired: c.restrictedFarmExpired,
@@ -401,6 +581,7 @@ function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedul
     listedPersonalProperty: computeLossContinuity({
       openingBalance: num(c.lppOpening),
       currentYearLoss: num(c.lppCurrentYearLoss),
+      carriedBack: lppCarriedBack ?? 0,
       appliedCurrentYear: num(c.lppApplied),
       expired: num(c.lppExpired),
       otherAdjustments: num(c.lppOtherAdjustments),
@@ -412,8 +593,8 @@ function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedul
       ? {
           limitedPartnershipLosses: computeLimitedPartnershipLosses(
             c.limitedPartnerships
-              .filter((p: Ri) => present(p?.precedingYearBalance))
-              .map((p: Ri) => ({
+              .filter((p) => present(p?.precedingYearBalance))
+              .map((p) => ({
                 ...(present(p.identifier) ? { identifier: String(p.identifier) } : {}),
                 precedingYearBalance: num(p.precedingYearBalance),
                 transferredOnWindUp: num(p.transferredOnWindUp),
@@ -429,25 +610,111 @@ function scheduleTwentyOne(federal: FederalT2Result, ri: Ri, schedule12: Schedul
 // ── Schedule 20 — donations (charitable pool only) ───────────────────────
 
 /**
- * The charitable-donations continuity reshapes directly from what the
- * federal side already collects. The "gifts to Canada/province, cultural
- * property, ecological land" continuity (lines 062-078) has no federal
- * source and no UI yet — omitted, not guessed.
+ * Two continuities. Charitable (Area A, lines 002-018) reshapes directly
+ * from what federal already collects, with Alberta-only overrides for the
+ * fields federal has no equivalent of at all (expired, wind-up transfer,
+ * acquisition-of-control, the amount applied). Gifts (lines 062-078 — gifts
+ * to Canada/province, cultural property, ecological land) has no federal
+ * source whatsoever: its current-year figure defaults to federal's cultural
+ * + ecological total, and its opening balance is Alberta-only input that can
+ * never be derived — same rule as every other AT1-only opening balance.
+ *
+ * Area B (the 75%-of-income ceiling, `computeDonationMaximum`) now also
+ * takes the gains/recapture inputs on gifted capital property — previously
+ * always zero because nothing populated them.
  */
-function scheduleTwenty(fed: Ri, schedule12: Schedule12Result) {
-  const currentYearGifts = num(fed.charitableDonations);
-  const openingBalance = num(fed.openingDonationPool);
-  if (currentYearGifts === 0 && openingBalance === 0) return undefined;
+function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
+  const d = ri.albertaDonations ?? {};
+
+  const charitableCurrentYear = num(fed.charitableDonations);
+  const charitableOpening = num(fed.openingDonationPool);
+  // `fed.charitableDonations` is federal's already-COMBINED total (charitable
+  // + cultural + ecological — see `scheduleTwo` in `assemble-t2-input.ts`),
+  // so the cultural/ecological split this default needs is only available on
+  // `ri.donations` directly, never on `fed`. `assembleT2Input` never
+  // separately exposes `cultural`/`ecological` on the assembled federal
+  // input, so reading them off `fed` here was always undefined — this
+  // default silently computed 0, not federal's actual cultural + ecological
+  // total, until this fix.
+  const donations = ri.donations ?? {};
+  const giftsCurrentYear = present(d.giftsCurrentYear)
+    ? num(d.giftsCurrentYear)
+    : num(donations.cultural) + num(donations.ecological);
+  const giftsOpening = num(d.giftsOpening);
+
+  const hasCharitable = charitableCurrentYear !== 0 || charitableOpening !== 0;
+  const hasGifts = giftsCurrentYear !== 0 || giftsOpening !== 0;
+  if (!hasCharitable && !hasGifts) return undefined;
 
   const maximum = computeDonationMaximum({
     albertaNetIncomeForTax: schedule12.albertaNetIncomeForTax,
+    ...(present(d.taxableCapitalGainsOnGifts)
+      ? { taxableCapitalGainsOnGifts: num(d.taxableCapitalGainsOnGifts) }
+      : {}),
+    ...(present(d.deemedGiftGains) ? { deemedGiftGains: num(d.deemedGiftGains) } : {}),
+    ...(present(d.recaptureOnGifts) ? { recaptureOnGifts: num(d.recaptureOnGifts) } : {}),
+    ...(present(d.proceedsNetOfOutlays) ? { proceedsNetOfOutlays: num(d.proceedsNetOfOutlays) } : {}),
+    ...(present(d.capitalCost) ? { capitalCost: num(d.capitalCost) } : {}),
   });
-  const charitable = computeSchedule20({
-    openingBalance,
-    currentYearGifts,
-    incomeLimit: maximum.maximumDeduction,
-  });
-  return { charitable, maximum };
+
+  // Area B computes ONE ceiling for the WHOLE schedule, not one per pool —
+  // the two pools' claims (016 charitable, 076 gifts) share it. Sequenced
+  // charitable-first (the form's own page order): charitable draws against
+  // the full ceiling, gifts draws against whatever's left. A preparer who
+  // wants a different split can override `charitableApplied`/`giftsApplied`
+  // directly — both already accept an explicit claim amount.
+  const charitable = hasCharitable
+    ? computeSchedule20({
+        openingBalance: charitableOpening,
+        currentYearGifts: charitableCurrentYear,
+        expired: num(d.charitableExpired),
+        transferredIn: num(d.charitableTransferredIn),
+        acquisitionOfControlAdjustment: num(d.charitableAcquisitionOfControlAdjustment),
+        ...(present(d.charitableApplied) ? { amountApplied: num(d.charitableApplied) } : {}),
+        incomeLimit: maximum.maximumDeduction,
+      })
+    : undefined;
+
+  const remainingCeiling = Math.max(0, maximum.maximumDeduction - (charitable?.amountApplied ?? 0));
+
+  // 090-100 — carryforward available, by category. Filed only when the
+  // preparer entered a year of origin; charitable (092) defaults to the
+  // charitable pool's own closing balance, the other three categories have
+  // no federal source to default from at all (see this schedule's own doc
+  // comment in `alberta-donations.ts`).
+  const carryforwardYearOfOrigin = present(d.carryforwardYearOfOrigin)
+    ? String(d.carryforwardYearOfOrigin)
+    : undefined;
+  const albertaCarryforward = carryforwardYearOfOrigin
+    ? {
+        yearOfOrigin: carryforwardYearOfOrigin,
+        ...(present(d.carryforwardCharitable) ? { charitable: num(d.carryforwardCharitable) } : {}),
+        ...(present(d.carryforwardToCanadaOrProvince)
+          ? { toCanadaOrProvince: num(d.carryforwardToCanadaOrProvince) }
+          : {}),
+        ...(present(d.carryforwardCulturalProperty)
+          ? { culturalProperty: num(d.carryforwardCulturalProperty) }
+          : {}),
+        ...(present(d.carryforwardEcologicalLand) ? { ecologicalLand: num(d.carryforwardEcologicalLand) } : {}),
+        ...(present(d.carryforwardMedicine) ? { medicine: num(d.carryforwardMedicine) } : {}),
+      }
+    : undefined;
+
+  const gifts = hasGifts
+    ? computeSchedule20({
+        openingBalance: giftsOpening,
+        currentYearGifts: giftsCurrentYear,
+        expired: num(d.giftsExpired),
+        transferredIn: num(d.giftsTransferredIn),
+        acquisitionOfControlAdjustment: num(d.giftsAcquisitionOfControlAdjustment),
+        ...(present(d.giftsApplied) ? { amountApplied: num(d.giftsApplied) } : {}),
+        incomeLimit: remainingCeiling,
+        ...(charitable ? { federalCarryforward: { charitable: charitable.closingBalance } } : {}),
+        ...(albertaCarryforward ? { albertaCarryforward } : {}),
+      })
+    : undefined;
+
+  return { ...(charitable ? { charitable } : {}), ...(gifts ? { gifts } : {}), maximum };
 }
 
 // ── Schedule 12 — reconciliation (composed LAST — needs 13/17/18/21's results) ──
@@ -463,11 +730,7 @@ function scheduleTwelve(
   farmContinuity: ReturnType<typeof computeLossContinuity> | undefined,
 ): {
   result: Schedule12Result;
-  filingInput: AlbertaReturnInput['schedules'] extends infer S
-    ? S extends { reconciliation?: infer R }
-      ? R
-      : never
-    : never;
+  filingInput: Schedule12FilingInput;
 } {
   const adjustments = [
     ...(cca
@@ -555,7 +818,7 @@ function scheduleTwelve(
     lossDeductions,
   };
 
-  return { result, filingInput: filingInput as never };
+  return { result, filingInput };
 }
 
 // ── Schedule 29 — the Innovation Employment Grant ────────────────────────
@@ -580,8 +843,8 @@ function yesNoOrUndefined(v: unknown): boolean | undefined {
  * formula (line 125) via `claimantAllocatedAllowedAmount`. Put the claiming
  * corporation first in `agreementMembers`, matching the UI's own instruction.
  */
-function assembleIegAgreement(iegInput: Ri): IegAgreementInput {
-  const members: Ri[] = iegInput.agreementMembers ?? [];
+function assembleIegAgreement(iegInput: AlbertaIegValues): IegAgreementInput {
+  const members: IegAgreementMember[] = iegInput.agreementMembers ?? [];
   return {
     longestYearCan: iegInput.agreementLongestYearCan ?? '',
     longestYearBegin: iegInput.agreementLongestYearBegin ?? '',
@@ -614,11 +877,13 @@ function assembleIegAgreement(iegInput: Ri): IegAgreementInput {
  * `assembleIegEligible` below, which defaults from these totals unless the
  * preparer overrode them directly.
  */
-function assembleAt4970(iegInput: Ri): NonNullable<AlbertaReturnInput['ieg']>['at4970'] {
-  const projects: Ri[] = iegInput.projects ?? [];
+function assembleAt4970(
+  iegInput: AlbertaIegValues,
+): NonNullable<AlbertaReturnInput['ieg']>['at4970'] {
+  const projects = iegInput.projects ?? [];
   if (projects.length === 0) return undefined;
 
-  const jurisdictions: Ri[] = iegInput.jurisdictions ?? [];
+  const jurisdictions = iegInput.jurisdictions ?? [];
 
   return {
     projects: projects.map((p) => ({
@@ -633,7 +898,9 @@ function assembleAt4970(iegInput: Ri): NonNullable<AlbertaReturnInput['ieg']>['a
     ...(jurisdictions.length > 0
       ? {
           jurisdictions: jurisdictions
-            .filter((j) => j.jurisdiction)
+            .filter((j): j is typeof j & { jurisdiction: NonNullable<typeof j.jurisdiction> } =>
+              Boolean(j.jurisdiction),
+            )
             .map((j) => ({ jurisdiction: j.jurisdiction, amountIncurred: num(j.amountIncurred) })),
         }
       : {}),
@@ -647,7 +914,9 @@ function assembleAt4970(iegInput: Ri): NonNullable<AlbertaReturnInput['ieg']>['a
  * composition collected only a bare `eligibleExpenditures` number with
  * nothing to derive it from.
  */
-function assembleIegEligible(iegInput: Ri): NonNullable<AlbertaReturnInput['ieg']>['eligible'] {
+function assembleIegEligible(
+  iegInput: AlbertaIegValues,
+): NonNullable<AlbertaReturnInput['ieg']>['eligible'] {
   return {
     federalAmount: num(iegInput.federalAmount),
     ...(iegInput.albertaPortion != null ? { albertaPortion: num(iegInput.albertaPortion) } : {}),
@@ -674,10 +943,11 @@ function assembleIegEligible(iegInput: Ri): NonNullable<AlbertaReturnInput['ieg'
  */
 function assembleIeg(ri: Ri): AlbertaReturnInput['ieg'] {
   const iegInput = ri.albertaIeg;
-  const members: Ri[] = iegInput?.group ?? [];
+  if (!iegInput) return undefined;
+  const members: IegGroupMember[] = iegInput.group ?? [];
   if (members.length === 0) return undefined;
 
-  const agreementMembers: Ri[] = iegInput.agreementMembers ?? [];
+  const agreementMembers: IegAgreementMember[] = iegInput.agreementMembers ?? [];
   const primaryFieldCode = Number(iegInput.primaryFieldCode);
 
   return {
@@ -710,7 +980,7 @@ function assembleIeg(ri: Ri): AlbertaReturnInput['ieg'] {
  */
 export function assembleAt1Schedules(
   federal: FederalT2Result,
-  fed: Ri,
+  fed: Fed,
   ri: Ri,
   albertaTaxableIncome: number,
   defaultBusinessLimit: number,
@@ -720,7 +990,7 @@ export function assembleAt1Schedules(
   const cca = scheduleThirteen(fed, ab, ri);
   const reserves = scheduleSeventeen(fed, ab);
   const dispositions = scheduleEighteen(fed, ab);
-  const lossCarryback = scheduleTen(federal);
+  const lossCarryback = scheduleTen(federal, ri);
   const smallBusinessDeduction = scheduleOne(fed, ri, albertaTaxableIncome, defaultBusinessLimit);
 
   // Nine standalone Alberta-only credit/deduction schedules — none are
@@ -753,8 +1023,16 @@ export function assembleAt1Schedules(
     undefined,
   );
 
-  const losses = scheduleTwentyOne(federal, ri, schedule12Result);
-  const donations = scheduleTwenty(fed, schedule12Result);
+  const losses = scheduleTwentyOne(
+    federal,
+    ri,
+    schedule12Result,
+    lossCarryback?.capital?.totalCarriedBack,
+    lossCarryback?.farmCarriedBack,
+    lossCarryback?.restrictedFarmCarriedBack,
+    lossCarryback?.lppCarriedBack,
+  );
+  const donations = scheduleTwenty(fed, ri, schedule12Result);
 
   // Re-run Schedule 12 once the continuities exist, so lines 064-071 (losses
   // of preceding years deducted) are populated too.

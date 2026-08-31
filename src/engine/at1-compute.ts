@@ -61,5 +61,8 @@ export function runAT1Compute(input: unknown, actor = 'engine'): EngineComputeOu
     // Carry the engine's own payload through to persistence. The filing path must
     // render what was computed, not reconstruct it from the summary fields.
     schedulePayloads: b.schedulePayloads,
+    // Every schedule's own validation notes, already merged by the engine
+    // (`AlbertaReturnResult.issues`) — not re-derived here.
+    issues: b.issues,
   };
 }

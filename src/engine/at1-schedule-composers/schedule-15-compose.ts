@@ -71,8 +71,25 @@ import {
   type SfedeCountrySuccessorFederal,
   type SfedeCountrySuccessorInput,
 } from '@classytic/ca-tax/t2';
-
-type Ri = Record<string, any>;
+import type {
+  AlbertaResourceDeductions15Values,
+  CcogpeRegularRow,
+  CcogpeSuccessorRow,
+  CdeRegularRow,
+  CdeSuccessorRow,
+  CeeRegularRow,
+  CeeSuccessorRow,
+  CfreCountryRegularRow,
+  CfreCountrySuccessorRow,
+  CmedbRow,
+  EdaRegularRow,
+  EdaSuccessorRow,
+  FedeRegularRow,
+  FedeSuccessorRow,
+  ReturnInput,
+  SfedeCountryRegularRow,
+  SfedeCountrySuccessorRow,
+} from '../return-input-contract.js';
 
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
 const yes = (v: unknown): boolean => v === 'yes';
@@ -84,7 +101,7 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 function hasAnyValue(v: unknown): boolean {
   if (v == null || v === '') return false;
   if (Array.isArray(v)) return v.some(hasAnyValue);
-  if (typeof v === 'object') return Object.values(v as Ri).some(hasAnyValue);
+  if (typeof v === 'object') return Object.values(v as Record<string, unknown>).some(hasAnyValue);
   return true;
 }
 
@@ -94,20 +111,29 @@ function hasAnyValue(v: unknown): boolean {
  * (possibly proper) subset of `fields` — the "must equal federal" lines the
  * spec gives no Alberta variant for simply never look up an `alberta<Name>`
  * key.
+ *
+ * `raw`'s type expresses the SAME `federal<Name>`/`alberta<Name>` pairing
+ * every `XxxRow` type in `return-input-contract.ts` declares explicitly
+ * (`EdaRegularRow.federalOpeningBalance`/`.albertaOpeningBalance`, etc.) —
+ * `Capitalize<T>` derives the exact key set from the same `fields` tuple each
+ * call site already passes, so a real row type (which has those keys) is
+ * assignable here without a cast; only `cap(f)` itself — a runtime string
+ * transform TypeScript cannot verify matches `Capitalize<T>` at the type
+ * level — needs one narrow, local assertion to bridge the two.
  */
 function readBlock<T extends string>(
-  raw: Ri | undefined,
+  raw: Partial<Record<`federal${Capitalize<T>}` | `alberta${Capitalize<T>}`, number>> | undefined,
   fields: readonly T[],
   overridableFields: readonly T[],
 ): { federal: Partial<Record<T, number>>; albertaOverride: Partial<Record<T, number>> } {
   const federal: Partial<Record<T, number>> = {};
   const albertaOverride: Partial<Record<T, number>> = {};
   for (const f of fields) {
-    const key = `federal${cap(f)}`;
+    const key = `federal${cap(f)}` as `federal${Capitalize<T>}`;
     if (present(raw?.[key])) federal[f] = num(raw?.[key]);
   }
   for (const f of overridableFields) {
-    const key = `alberta${cap(f)}`;
+    const key = `alberta${cap(f)}` as `alberta${Capitalize<T>}`;
     if (present(raw?.[key])) albertaOverride[f] = num(raw?.[key]);
   }
   return { federal, albertaOverride };
@@ -312,14 +338,14 @@ const CFRE_SUCCESSOR_OVERRIDABLE_FIELDS = [
 
 // ── EDA ───────────────────────────────────────────────────────────────────
 
-function edaRegular(raw: Ri | undefined): EdaRegularInput {
+function edaRegular(raw: EdaRegularRow | undefined): EdaRegularInput {
   const { federal, albertaOverride } = readBlock(raw, EDA_REGULAR_FIELDS, EDA_REGULAR_FIELDS);
   return {
     federal: federal as EdaRegularFederal,
     ...(hasAnyValue(albertaOverride) ? { albertaOverride } : {}),
   };
 }
-function edaSuccessor(raw: Ri | undefined): EdaSuccessorInput {
+function edaSuccessor(raw: EdaSuccessorRow | undefined): EdaSuccessorInput {
   const { federal, albertaOverride } = readBlock(raw, EDA_SUCCESSOR_FIELDS, EDA_SUCCESSOR_FIELDS);
   return {
     federal: federal as EdaSuccessorFederal,
@@ -329,7 +355,7 @@ function edaSuccessor(raw: Ri | undefined): EdaSuccessorInput {
 
 // ── CMEDB ─────────────────────────────────────────────────────────────────
 
-function cmedbInput(raw: Ri | undefined): AlbertaSchedule15Input['cmedb'] {
+function cmedbInput(raw: CmedbRow | undefined): AlbertaSchedule15Input['cmedb'] {
   if (!hasAnyValue(raw)) return undefined;
   const { federal, albertaOverride } = readBlock(raw, CMEDB_FIELDS, CMEDB_FIELDS);
   return {
@@ -341,7 +367,7 @@ function cmedbInput(raw: Ri | undefined): AlbertaSchedule15Input['cmedb'] {
 
 // ── CEE ───────────────────────────────────────────────────────────────────
 
-function ceeRegular(raw: Ri | undefined): CeeRegularInput {
+function ceeRegular(raw: CeeRegularRow | undefined): CeeRegularInput {
   const { federal, albertaOverride } = readBlock(
     raw,
     CEE_REGULAR_ALL_FIELDS,
@@ -357,7 +383,7 @@ function ceeRegular(raw: Ri | undefined): CeeRegularInput {
     ...(present(raw?.claimed) ? { claimed: num(raw?.claimed) } : {}),
   };
 }
-function ceeSuccessor(raw: Ri | undefined): CeeSuccessorInput {
+function ceeSuccessor(raw: CeeSuccessorRow | undefined): CeeSuccessorInput {
   const { federal, albertaOverride } = readBlock(
     raw,
     CEE_SUCCESSOR_ALL_FIELDS,
@@ -373,7 +399,10 @@ function ceeSuccessor(raw: Ri | undefined): CeeSuccessorInput {
 // ── CDE (consumes CCOGPE's already-computed subtotal — see the engine's own
 //    module doc comment for the 015105/015133 cross-linkage this feeds) ────
 
-function cdeRegular(raw: Ri | undefined, daysInTaxYear: number | undefined): CdeRegularInput {
+function cdeRegular(
+  raw: CdeRegularRow | undefined,
+  daysInTaxYear: number | undefined,
+): CdeRegularInput {
   const { federal, albertaOverride } = readBlock(
     raw,
     CDE_REGULAR_ALL_FIELDS,
@@ -386,7 +415,10 @@ function cdeRegular(raw: Ri | undefined, daysInTaxYear: number | undefined): Cde
     ...(daysInTaxYear !== undefined ? { daysInTaxYear } : {}),
   };
 }
-function cdeSuccessor(raw: Ri | undefined, daysInTaxYear: number | undefined): CdeSuccessorInput {
+function cdeSuccessor(
+  raw: CdeSuccessorRow | undefined,
+  daysInTaxYear: number | undefined,
+): CdeSuccessorInput {
   const { federal, albertaOverride } = readBlock(
     raw,
     CDE_SUCCESSOR_ALL_FIELDS,
@@ -402,7 +434,10 @@ function cdeSuccessor(raw: Ri | undefined, daysInTaxYear: number | undefined): C
 
 // ── CCOGPE ────────────────────────────────────────────────────────────────
 
-function ccogpeRegular(raw: Ri | undefined, daysInTaxYear: number | undefined): CcogpeRegularInput {
+function ccogpeRegular(
+  raw: CcogpeRegularRow | undefined,
+  daysInTaxYear: number | undefined,
+): CcogpeRegularInput {
   const { federal, albertaOverride } = readBlock(
     raw,
     CCOGPE_REGULAR_ALL_FIELDS,
@@ -416,7 +451,7 @@ function ccogpeRegular(raw: Ri | undefined, daysInTaxYear: number | undefined): 
   };
 }
 function ccogpeSuccessor(
-  raw: Ri | undefined,
+  raw: CcogpeSuccessorRow | undefined,
   daysInTaxYear: number | undefined,
 ): CcogpeSuccessorInput {
   const { federal, albertaOverride } = readBlock(
@@ -434,7 +469,10 @@ function ccogpeSuccessor(
 
 // ── FEDE ──────────────────────────────────────────────────────────────────
 
-function fedeRegular(raw: Ri | undefined, daysInTaxYear: number | undefined): FedeRegularInput {
+function fedeRegular(
+  raw: FedeRegularRow | undefined,
+  daysInTaxYear: number | undefined,
+): FedeRegularInput {
   const { federal, albertaOverride } = readBlock(
     raw,
     FEDE_REGULAR_ALL_FIELDS,
@@ -447,7 +485,7 @@ function fedeRegular(raw: Ri | undefined, daysInTaxYear: number | undefined): Fe
     ...(daysInTaxYear !== undefined ? { daysInTaxYear } : {}),
   };
 }
-function fedeSuccessor(raw: Ri | undefined): FedeSuccessorInput {
+function fedeSuccessor(raw: FedeSuccessorRow | undefined): FedeSuccessorInput {
   // No `daysInTaxYear` — FEDE successor (015221) has no percentage rate at all.
   const { federal, albertaOverride } = readBlock(
     raw,
@@ -466,7 +504,7 @@ function fedeSuccessor(raw: Ri | undefined): FedeSuccessorInput {
 //    per-entry composer in this engine follows. ───────────────────────────
 
 function sfedeRegularEntries(
-  rows: Ri[] | undefined,
+  rows: SfedeCountryRegularRow[] | undefined,
   daysInTaxYear: number | undefined,
 ): SfedeCountryRegularInput[] {
   return (rows ?? [])
@@ -489,7 +527,9 @@ function sfedeRegularEntries(
       };
     });
 }
-function sfedeSuccessorEntries(rows: Ri[] | undefined): SfedeCountrySuccessorInput[] {
+function sfedeSuccessorEntries(
+  rows: SfedeCountrySuccessorRow[] | undefined,
+): SfedeCountrySuccessorInput[] {
   return (rows ?? [])
     .filter((r) => present(r?.countryCode))
     .map((r) => {
@@ -513,7 +553,7 @@ function sfedeSuccessorEntries(rows: Ri[] | undefined): SfedeCountrySuccessorInp
 // ── CFRE — per-country arrays, same row-dropping rule as SFEDE ─────────────
 
 function cfreRegularEntries(
-  rows: Ri[] | undefined,
+  rows: CfreCountryRegularRow[] | undefined,
   daysInTaxYear: number | undefined,
 ): CfreCountryRegularInput[] {
   return (rows ?? [])
@@ -545,7 +585,7 @@ function cfreRegularEntries(
     });
 }
 function cfreSuccessorEntries(
-  rows: Ri[] | undefined,
+  rows: CfreCountrySuccessorRow[] | undefined,
   daysInTaxYear: number | undefined,
 ): CfreCountrySuccessorInput[] {
   return (rows ?? [])
@@ -581,8 +621,8 @@ function cfreSuccessorEntries(
  * "entered something": those alone would produce every pool at a zero
  * balance, which is not a return worth filing this schedule for.
  */
-export function assembleSchedule15(ri: Ri): AlbertaSchedule15Result | undefined {
-  const root: Ri | undefined = ri.albertaResourceDeductions15;
+export function assembleSchedule15(ri: ReturnInput): AlbertaSchedule15Result | undefined {
+  const root: AlbertaResourceDeductions15Values | undefined = ri.albertaResourceDeductions15;
   if (!root) return undefined;
 
   const edaRegularRaw = root.edaRegular;
@@ -596,10 +636,10 @@ export function assembleSchedule15(ri: Ri): AlbertaSchedule15Result | undefined 
   const ccogpeSuccessorRaw = root.ccogpeSuccessor;
   const fedeRegularRaw = root.fedeRegular;
   const fedeSuccessorRaw = root.fedeSuccessor;
-  const sfedeRegularRows: Ri[] = root.sfedeRegular ?? [];
-  const sfedeSuccessorRows: Ri[] = root.sfedeSuccessor ?? [];
-  const cfreRegularRows: Ri[] = root.cfreRegular ?? [];
-  const cfreSuccessorRows: Ri[] = root.cfreSuccessor ?? [];
+  const sfedeRegularRows = root.sfedeRegular ?? [];
+  const sfedeSuccessorRows = root.sfedeSuccessor ?? [];
+  const cfreRegularRows = root.cfreRegular ?? [];
+  const cfreSuccessorRows = root.cfreSuccessor ?? [];
 
   const hasEda = hasAnyValue(edaRegularRaw) || hasAnyValue(edaSuccessorRaw);
   const hasCee = hasAnyValue(ceeRegularRaw) || hasAnyValue(ceeSuccessorRaw);

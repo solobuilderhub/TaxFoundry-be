@@ -19,10 +19,10 @@
  * Alberta tax payable) — are AT1 JACKET lines, not Schedule 4's own. Per the
  * task brief, these are read from `ri.alberta` rather than re-collected under
  * this schedule's own key:
- *   - `ri.alberta.royaltyTaxDeduction` already exists as real preparer input
- *     (see `apps/web/.../_config/schedules/alberta.ts`'s "Royalty Tax
- *     Deduction" field, which also feeds AT1 Schedule 1) — sourced from there
- *     directly, no duplication.
+ *   - `ri.albertaSbd.royaltyTaxDeduction` already exists as real preparer
+ *     input (see `apps/web/.../_config/schedules/alberta-sbd.ts`'s "Royalty
+ *     Tax Deduction" field, which also feeds AT1 Schedule 1) — sourced from
+ *     there directly, no duplication.
  *   - `ri.alberta.albertaTaxableIncome` / `ri.alberta.allocationFactor` /
  *     `ri.alberta.basicAlbertaTax` are NOT currently populated anywhere in
  *     the running app as of this composer's authoring: `albertaTaxableIncome`
@@ -49,8 +49,13 @@
  * Schedule 4 export block for the collision this avoids.
  */
 import { computeAlbertaSchedule4, type AlbertaSchedule4Result } from '@classytic/ca-tax/t2';
+import type {
+  AlbertaSbdValues,
+  AlbertaValues,
+  ForeignInvestmentCountry4Row,
+  ReturnInput,
+} from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v) || 0);
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
@@ -61,14 +66,25 @@ const present = (v: unknown): boolean => v != null && v !== '';
  * `undefined`-return pattern the rest of `assemble-at1-schedules.ts` uses
  * (e.g. `scheduleTwenty`, `scheduleTen`).
  */
-export function assembleSchedule4(ri: Ri): AlbertaSchedule4Result | undefined {
-  const rows: Ri[] = ri.albertaForeignInvestment4?.countries ?? [];
+export function assembleSchedule4(ri: ReturnInput): AlbertaSchedule4Result | undefined {
+  const rows: ForeignInvestmentCountry4Row[] = ri.albertaForeignInvestment4?.countries ?? [];
   const countries = rows.filter(
     (c) => present(c?.country) || present(c?.netForeignInvestmentIncome),
   );
   if (countries.length === 0) return undefined; // nothing to file
 
-  const ab: Ri = ri.alberta ?? {};
+  // `albertaTaxableIncome`/`allocationFactor`/`basicAlbertaTax` are NOT yet
+  // fields on `AlbertaValues` — see this module's own header comment: no
+  // caller merges them onto `ri.alberta` yet, so these three always read
+  // `undefined` today. Typed as a documented extension, not `AlbertaValues`
+  // itself, so this composer doesn't silently claim they exist on the real
+  // jacket slice until the wiring described above actually lands.
+  const ab: AlbertaValues & {
+    albertaTaxableIncome?: number;
+    allocationFactor?: number;
+    basicAlbertaTax?: number;
+  } = ri.alberta ?? {};
+  const sbd: AlbertaSbdValues = ri.albertaSbd ?? {};
 
   return computeAlbertaSchedule4({
     countries: countries.map((c) => ({
@@ -84,7 +100,7 @@ export function assembleSchedule4(ri: Ri): AlbertaSchedule4Result | undefined {
     ...(present(ab.albertaTaxableIncome)
       ? { albertaTaxableIncome: num(ab.albertaTaxableIncome) }
       : {}),
-    ...(present(ab.royaltyTaxDeduction) ? { royaltyTaxDeduction: num(ab.royaltyTaxDeduction) } : {}),
+    ...(present(sbd.royaltyTaxDeduction) ? { royaltyTaxDeduction: num(sbd.royaltyTaxDeduction) } : {}),
     ...(present(ab.allocationFactor) ? { allocationFactor: num(ab.allocationFactor) } : {}),
     ...(present(ab.basicAlbertaTax) ? { basicAlbertaTax: num(ab.basicAlbertaTax) } : {}),
   });

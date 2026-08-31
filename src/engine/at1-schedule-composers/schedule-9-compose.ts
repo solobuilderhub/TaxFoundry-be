@@ -42,8 +42,8 @@ import {
   type Schedule9AllocationMember,
   type Schedule9GroupFilingInput,
 } from '@classytic/ca-tax/t2';
+import type { AlbertaSredCredit9Values, ReturnInput } from '../return-input-contract.js';
 
-type Ri = Record<string, any>;
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v) || 0);
 /** A field the preparer actually entered, as opposed to left blank — `0` counts, `''`/`null`/`undefined` do not. */
 const present = (v: unknown): boolean => v != null && v !== '';
@@ -61,11 +61,11 @@ export interface Schedule9Composition {
  * `undefined`-return pattern the rest of `assemble-at1-schedules.ts` uses
  * (e.g. `scheduleTwenty`, `scheduleTen`, `assembleSchedule8`).
  */
-export function assembleSchedule9(ri: Ri): Schedule9Composition | undefined {
-  const s9: Ri = ri.albertaSredCredit9;
+export function assembleSchedule9(ri: ReturnInput): Schedule9Composition | undefined {
+  const s9: AlbertaSredCredit9Values | undefined = ri.albertaSredCredit9;
   if (!s9) return undefined;
 
-  const groupRows: Ri[] = Array.isArray(s9.group) ? s9.group : [];
+  const groupRows = Array.isArray(s9.group) ? s9.group : [];
   const members = groupRows.filter((m) => present(m?.name) || present(m?.allocated));
 
   const hasContent =

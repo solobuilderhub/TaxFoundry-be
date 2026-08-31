@@ -292,7 +292,7 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
           // Schedule 33: $30M taxable capital → halfway through the $10M→$50M grind.
           capital: { capitalStock: 30000000 },
           // Schedule 13: a doubtful-debts reserve (opening 40k reversed, closing 55k deducted).
-          reserves: { rows: [{ type: 'doubtful debts', opening: 40000, closing: 55000 }] },
+          reserves: { rows: [{ type: 'doubtfulDebts', opening: 40000, closing: 55000 }] },
         },
       },
     });

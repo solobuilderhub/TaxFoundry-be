@@ -16,6 +16,17 @@ export interface At1TransmitResult {
   status: 'accepted' | 'rejected';
   confirmationNumber: string | null;
   errorCodes: string[];
+  /**
+   * The exact bytes TRA sent back, before any parsing. Optional because a test
+   * fake has no wire response to report — but the REAL client always supplies
+   * it. Without this, a submission attempt's `rawResponse` field (see
+   * `submission-attempt.service.ts`) stores only the already-interpreted
+   * `{status, confirmationNumber, errorCodes}` summary — which is not the raw
+   * response its name promises, and is exactly the wrong shape to diagnose a
+   * `NO_RECOGNISED_RESPONSE` rejection (an unparseable body looks IDENTICAL
+   * to a genuinely empty one without the original bytes to inspect).
+   */
+  rawResponseText?: string;
 }
 
 export interface At1FilingGateway {
