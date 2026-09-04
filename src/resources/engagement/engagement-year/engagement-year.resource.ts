@@ -17,6 +17,7 @@ import { orgStaffPermissions, requireOrgManager } from '#shared/permissions.js';
 import { flexibleMultiTenantPreset } from '#shared/presets/flexible-multi-tenant.js';
 import { autoFillEngagement } from '../../../afr/afr.service.js';
 import { prepareAt1NetFile } from '../../../engine/at1-netfile.service.js';
+import { prepareAt1Rsi } from '../../../engine/at1-rsi.service.js';
 import { CcaPreviewRequestSchema, previewCcaClasses } from '../../../engine/cca-preview.service.js';
 import {
   computeEngagementT2,
@@ -204,6 +205,28 @@ const engagementYearResource = defineResource<EngagementYearDocument>({
           position?: string;
         };
         return prepareAt1NetFile({
+          engagementId: id,
+          orgId,
+          certification: {
+            firstName: cert.firstName ?? '',
+            lastName: cert.lastName ?? '',
+            position: cert.position ?? '',
+          },
+        });
+      },
+    },
+    'prepare-rsi': {
+      description:
+        'Render the Alberta AT1 RSI paper print text for review (the fixed-layout text format, distinct from Net File XML — does not transmit)',
+      handler: async (id, data, req) => {
+        const orgId = getOrgId(req.scope);
+        if (!orgId) throw createError(403, 'Organization context required');
+        const cert = (data.certification ?? {}) as {
+          firstName?: string;
+          lastName?: string;
+          position?: string;
+        };
+        return prepareAt1Rsi({
           engagementId: id,
           orgId,
           certification: {

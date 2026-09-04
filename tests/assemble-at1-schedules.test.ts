@@ -85,17 +85,15 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
   });
 
   it('files the gifts pool from federal cultural + ecological gifts, with no Alberta override', () => {
-    // `cultural`/`ecological` are NOT fields of the assembled federal engine
-    // input (`assembleT2Input` folds both into the single `charitableDonations`
-    // total — see `assemble-t2-input.ts`'s own `AssembledFederalInput` doc
-    // comment) — they only ever exist on the structured working return's
-    // `donations` slice, which is what `scheduleTwenty` actually reads this
-    // default from.
-    const riWithGifts = {
-      ...riWithDivergence,
-      donations: { cultural: 4_000, ecological: 6_000 },
-    };
-    const engineInput = assembleProvincialInput('AT1', fed, riWithGifts, {
+    // `culturalEcologicalGifts` is a real field of the assembled federal
+    // engine input — `assembleT2Input`'s `scheduleTwo` no longer folds
+    // cultural/ecological into the (75%-capped) `charitableDonations` total;
+    // they're a separate, uncapped figure (see that function's own doc
+    // comment for why combining them was a real bug). This `fed` fixture
+    // stands in for what `assembleT2Input` would have produced from a
+    // working return with `donations: { cultural: 4_000, ecological: 6_000 }`.
+    const fedWithGifts = { ...fed, culturalEcologicalGifts: 10_000 };
+    const engineInput = assembleProvincialInput('AT1', fedWithGifts, riWithDivergence, {
       isCcpc: true,
     }) as { schedules?: { donations?: { gifts?: { currentYearGifts: number } } } };
     expect(engineInput.schedules?.donations?.gifts?.currentYearGifts).toBe(10_000);
@@ -508,21 +506,17 @@ describe('runAT1Compute — the nine previously-unmodeled schedules (3/4/5/6/7/8
       federalQualifiedExpenditures: 100_000,
       albertaPortionOfExpenditures: 60_000,
     },
-    albertaManufacturing11: {
-      manufacturingGrossRevenue: 200_000,
-      totalGrossRevenue: 500_000,
-    },
     albertaResourceDeductions15: {
       ceeRegular: { federalCurrentYearExpenses: 10_000, claimed: 2_000 },
     },
   };
 
-  it('files schedules 003, 004, 005, 006, 007, 008, 009, 011 and 015 for a fact pattern that touches each', () => {
+  it('files schedules 003, 004, 005, 006, 007, 008, 009 and 015 for a fact pattern that touches each', () => {
     const engineInput = assembleProvincialInput('AT1', fed, riNineSchedules, { isCcpc: true });
     const out = runAT1Compute(engineInput);
     const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId).sort();
 
-    for (const id of ['003', '004', '005', '006', '007', '008', '009', '011', '015']) {
+    for (const id of ['003', '004', '005', '006', '007', '008', '009', '015']) {
       expect(filedIds).toContain(id);
     }
   });
@@ -762,8 +756,12 @@ describe('runAT1Compute — AT4970 + page 1 + PE-eligibility, wired from the UI 
     expect(byId.get('029031001')).toBe(1_000_000);
     expect(byId.get('029040001')).toBe(2); // primaryFieldCode, coerced to a number
 
-    const sch4970 = out.schedulePayloads?.find((s) => s.scheduleId === '4970');
-    expect(sch4970).toBeDefined();
+    // AT4970 is deliberately NOT filed in schedulePayloads — TRA's own spec
+    // states it "is not required if the return is net filed" and assigns it
+    // no 3-character wire-format Schedule ID; its old placeholder id ('4970',
+    // 4 characters) produced a malformed line item id that broke RSI
+    // rendering. Its own totals still correctly default 029005 above.
+    expect(out.schedulePayloads?.some((s) => s.scheduleId === '4970')).toBe(false);
   });
 
   it('lands on TRA’s own published NET IEG — 89,250 — with C and D correctly zeroed for having no Alberta PE', () => {

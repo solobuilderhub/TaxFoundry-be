@@ -39,8 +39,6 @@ const sources = (
       { line: 'basicAlbertaTax', value: 15_600 },
       { line: 'albertaSmallBusinessDeduction', value: 11_700 },
       { line: 'innovationEmploymentGrant', value: 0 },
-      { line: 'federalTaxableIncome', value: 195_000 },
-      { line: 'albertaActiveBusinessIncome', value: 195_000 },
     ],
     // What `engagement-compute.service.ts` freezes: the client-derived identity,
     // INCLUDING the AT1 jacket fields, so a later edit to the client record
@@ -98,7 +96,6 @@ describe('composeAt1FilingData — the editor slice reaches the payload', () => 
     expect(d.reportsDifferentAlbertaIncome).toBe(true);
     expect(d.preparedByTaxPreparerForFee).toBe(true);
     expect(d.finalReturn).toBe(false);
-    expect(d.associatedWithCcpcs).toBe(false);
   });
 
   it('is NOT satisfied by identity carrying the same keys', () => {
@@ -130,7 +127,6 @@ describe('an unanswered question never becomes "No"', () => {
     const d = composeAt1FilingData(sources());
 
     expect(d.finalReturn).toBeUndefined();
-    expect(d.associatedWithCcpcs).toBeUndefined();
     expect(d.grossRevenue).toBeUndefined();
   });
 
@@ -144,7 +140,6 @@ describe('an unanswered question never becomes "No"', () => {
       const { missing } = err as At1MandatoryFieldMissingError;
       expect(missing).toContain('000047 gross revenue');
       expect(missing).toContain('000050 final return');
-      expect(missing).toContain('000001 associated with CCPCs');
     }
   });
 

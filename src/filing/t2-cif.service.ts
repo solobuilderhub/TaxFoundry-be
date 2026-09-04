@@ -30,7 +30,7 @@ const nn = (v: unknown): number => {
  * owns the GIFI chart + the accounting-identity validation). Totals (2599 / 3640
  * / 8299 / 9999) are computed so CRA's balancing rule can be checked.
  */
-function buildGifiFromReturn(ri: {
+export function buildGifiFromReturn(ri: {
   balanceSheet?: Record<string, unknown>;
   incomeStatement?: Record<string, unknown>;
   gifiNotes?: Record<string, unknown>;
@@ -46,6 +46,7 @@ function buildGifiFromReturn(ri: {
       inv = nn(bs.inventory);
     const capital = nn(bs.capitalAssetsNet),
       otherA = nn(bs.otherAssets);
+    const accumulatedAmortization = nn(bs.accumulatedAmortization);
     const ap = nn(bs.accountsPayable),
       loans = nn(bs.loansPayable),
       otherL = nn(bs.otherLiabilities);
@@ -58,7 +59,25 @@ function buildGifiFromReturn(ri: {
       '1001': cash,
       '1060': ar,
       '1120': inv,
-      '1740': capital,
+      // 2008 ("Total Tangible Capital Assets") per @classytic/ledger-ca's own
+      // account database, not 1740 ("Machinery and Equipment" — a narrow
+      // leaf code an earlier version of this line used, mislabeling this
+      // app's combined net-capital-assets figure as if it were machinery
+      // alone). 2008's OWN canonical meaning is the GROSS cost total, with
+      // its accumulated-amortization counterpart at 2009 — confirmed against
+      // ledger-ca's own '2599' (Total Assets) totalAccountTypes definition,
+      // which SUBTRACTS 2009 from 2008 to reach the net figure. So the gross
+      // total filed here is `capitalAssetsNet + accumulatedAmortization`
+      // when the preparer has entered one, else `capitalAssetsNet` alone
+      // (accumulatedAmortization defaults to 0, same as any other unentered
+      // GIFI line) — NOT the net figure by itself, unlike before this fix.
+      // 2599/3640 (this app's own balance-sheet totals, checked by
+      // `validateGifiBalancing`) still use the NET `capital` figure and are
+      // UNCHANGED by this — 2008/2009 are a supplementary GIFI breakdown,
+      // not an input to this app's own accounting. See
+      // research/findings/federal/gifi-capital-assets-cost-of-sales-code-fix.md.
+      '2008': capital + accumulatedAmortization,
+      '2009': accumulatedAmortization,
       '1480': otherA,
       '1599': cash + ar + inv + otherA, // total current-ish assets
       '2599': totalAssets, // TOTAL ASSETS
@@ -80,7 +99,11 @@ function buildGifiFromReturn(ri: {
       other = nn(is.otherExpenses);
     Object.assign(values, {
       '8299': rev, // TOTAL REVENUE
-      '8320': cogs,
+      // 8518 ("Total Cost of Sales") per ledger-ca, not 8320 ("Purchases /
+      // Cost of Materials" — a single component of cost of sales that an
+      // earlier version of this line used for the app's WHOLE combined
+      // figure). See the same finding doc referenced above.
+      '8518': cogs,
       '9060': sal,
       '8670': amort,
       '9270': other,
@@ -282,7 +305,11 @@ export async function composeT2FilingData(params: ComposeT2FilingParams): Promis
     ...(idn.inactive != null ? { inactive: Boolean(idn.inactive) } : {}),
     ...(idn.firstReturn != null ? { firstYear: Boolean(idn.firstReturn) } : {}),
     ...(idn.addressChanged != null ? { addressChanged: Boolean(idn.addressChanged) } : {}),
-    ...(idn.nonResident != null ? { nonResident: Boolean(idn.nonResident) } : {}),
+    // Jacket line 080 asks "Is the corporation a resident of Canada?" — the
+    // OPPOSITE of what the guided editor collects (`nonResident`). Invert here
+    // so the real line gets a real answer instead of staying unanswered.
+    ...(idn.nonResident != null ? { residentOfCanada: !idn.nonResident } : {}),
+    ...(idn.deemedYearEnd != null ? { deemedYearEnd: Boolean(idn.deemedYearEnd) } : {}),
     ...(idn.amalgamation != null ? { amalgamation: Boolean(idn.amalgamation) } : {}),
     ...(idn.windUp != null ? { windUp: Boolean(idn.windUp) } : {}),
     ...(idn.finalReturn != null ? { finalReturn: Boolean(idn.finalReturn) } : {}),

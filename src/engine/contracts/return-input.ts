@@ -33,7 +33,6 @@ import {
   AlbertaDonationsValues,
   AlbertaForeignInvestment4Values,
   AlbertaIegValues,
-  AlbertaManufacturing11Values,
   AlbertaOtherCredits3Values,
   AlbertaPoliticalContributions8Values,
   AlbertaResourceDeductions15Values,
@@ -107,7 +106,6 @@ export const ReturnInputSchema = z
     albertaRoyaltySupplemental7: AlbertaRoyaltySupplemental7Values.optional(),
     albertaPoliticalContributions8: AlbertaPoliticalContributions8Values.optional(),
     albertaSredCredit9: AlbertaSredCredit9Values.optional(),
-    albertaManufacturing11: AlbertaManufacturing11Values.optional(),
     albertaResourceDeductions15: AlbertaResourceDeductions15Values.optional(),
   })
   .meta({ id: 'ReturnInput' })

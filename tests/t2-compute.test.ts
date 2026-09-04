@@ -152,4 +152,40 @@ describe('Schedule 1 is assembled by CRA line number', () => {
     expect(l104).toHaveLength(1);
     expect(l104[0]!.amount).toBe(37000);
   });
+
+  it('ccaClaimed includes a NEW class 13/14 addition, not just the ordinary declining-balance classes', () => {
+    // Regression test: QA found the "CCA" summary tile and this itemized
+    // field both read only the ordinary classes' total, silently dropping a
+    // class 13/14 addition even though it genuinely reduced taxable income.
+    const withOrdinaryOnly = runT2Compute({
+      period,
+      bookNetIncome: 200000,
+      activeBusinessIncome: 200000,
+      ccaClasses: [{ ccaClass: '8', openingUCC: 100000 }], // 20% × 100,000 = 20,000
+    });
+    expect(withOrdinaryOnly.fields.find((f) => f.line === 'ccaClaimed')?.value).toBe(20000);
+
+    // A return with ONLY a class 13 layer and no ordinary classes at all —
+    // this used to file no `ccaClaimed` field whatsoever (gated on `b.cca`).
+    const class13Only = runT2Compute({
+      period,
+      bookNetIncome: 200000,
+      activeBusinessIncome: 200000,
+      class13: { layers: [{ capitalCost: 100000, periods: 10 }], openingUCC: 100000 },
+    });
+    const claimed = class13Only.fields.find((f) => f.line === 'ccaClaimed');
+    expect(claimed).toBeDefined();
+    expect(claimed?.value).toBeGreaterThan(0);
+
+    // Both an ordinary class AND a class 13 layer — the field is their SUM.
+    const both = runT2Compute({
+      period,
+      bookNetIncome: 200000,
+      activeBusinessIncome: 200000,
+      ccaClasses: [{ ccaClass: '8', openingUCC: 100000 }],
+      class13: { layers: [{ capitalCost: 100000, periods: 10 }], openingUCC: 100000 },
+    });
+    const bothClaimed = both.fields.find((f) => f.line === 'ccaClaimed')?.value as number;
+    expect(bothClaimed).toBe(20000 + (claimed!.value as number));
+  });
 });

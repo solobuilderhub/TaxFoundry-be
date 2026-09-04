@@ -65,9 +65,16 @@ export const Disposition = z
     proceeds: z.number().optional(),
     acb: z.number().optional(),
     outlays: z.number().optional(),
-    category: At1DispositionCategory.optional().describe(
-      'Feeds AT1 Schedule 18 only; the federal Schedule 6 computation ignores it.',
-    ),
+    // The Guided-view combobox sends `""` for "nothing selected" rather than
+    // omitting the key, so an empty string must be tolerated here the same
+    // as `undefined` — Zod's own `.enum()` would otherwise 400 on it. Not
+    // normalized to `undefined` in the schema itself (a `.transform()` here
+    // cannot be represented in the generated JSON Schema apps/web's
+    // `return-input.ts` is emitted from) — callers treat `''` as unset.
+    category: z
+      .union([At1DispositionCategory, z.literal('')])
+      .optional()
+      .describe('Feeds AT1 Schedule 18 only; the federal Schedule 6 computation ignores it.'),
   })
   .meta({ id: 'Disposition' });
 
@@ -133,6 +140,12 @@ export const BalanceSheetValues = z
     accountsReceivable: z.number().optional(),
     inventory: z.number().optional(),
     capitalAssetsNet: z.number().optional(),
+    accumulatedAmortization: z
+      .number()
+      .optional()
+      .describe(
+        'GIFI 2009 — accumulated amortization on tangible capital assets. Optional: leave blank if unknown, and capitalAssetsNet still files (as a net figure) under GIFI 2008.',
+      ),
     otherAssets: z.number().optional(),
     accountsPayable: z.number().optional(),
     loansPayable: z.number().optional(),
@@ -264,7 +277,50 @@ export const SbdValues = z
     activeBusinessIncome: z.number().optional(),
     businessLimit: z.number().optional(),
     taxableCapital: z.number().optional(),
-    aaii: z.number().optional(),
+    aaii: z
+      .number()
+      .optional()
+      .describe(
+        'Adjusted aggregate investment income, PRIOR year (Schedule 7 Part 2, line 745) — the SBD passive-income grind only.',
+      ),
+    aggregateInvestmentIncome: z
+      .number()
+      .optional()
+      .describe(
+        'Aggregate investment income, CURRENT year (Schedule 7 Part 1, line 092 / jacket line 440) — feeds Part IV/RDTOH, not the grind. Defaults to `aaii` when omitted.',
+      ),
+    aiiDetail: z
+      .object({
+        taxableCapitalGains: z.number().optional().describe('002'),
+        allowableCapitalLosses: z.number().optional().describe('012'),
+        netCapitalLossesClaimed: z.number().optional().describe('022 — T2 jacket line 332'),
+        incomeFromProperty: z.number().optional().describe('032'),
+        exemptIncome: z.number().optional().describe('042'),
+        agriInvestFundReceived: z.number().optional().describe('052'),
+        taxableDividendsDeductible: z.number().optional().describe('062'),
+        trustPropertyIncome: z.number().optional().describe('072'),
+        lossesFromProperty: z.number().optional().describe('082'),
+      })
+      .optional()
+      .describe(
+        'Schedule 7 Part 1 detail — when entered and `aggregateInvestmentIncome` is left blank, AII is derived from these instead of typed in directly.',
+      ),
+    aaiiDetail: z
+      .object({
+        taxableCapitalGains: z.number().optional().describe('705 — excludes active-asset dispositions'),
+        allowableCapitalLosses: z.number().optional().describe('710 — excludes active-asset dispositions'),
+        incomeFromProperty: z.number().optional().describe('715'),
+        exemptIncome: z.number().optional().describe('720'),
+        agriInvestFundReceived: z.number().optional().describe('725'),
+        dividendsFromConnectedCorporations: z.number().optional().describe('730'),
+        trustPropertyIncome: z.number().optional().describe('735'),
+        lossesFromProperty: z.number().optional().describe('740'),
+        subsection91_4Deduction: z.number().optional().describe('741 — FAPI, s.91(4)'),
+      })
+      .optional()
+      .describe(
+        'Schedule 7 Part 2 detail — when entered and `aaii` is left blank, AAII is derived from these instead of typed in directly.',
+      ),
     zetmIncome: z
       .number()
       .optional()
@@ -276,7 +332,68 @@ export const SbdValues = z
   })
   .meta({ id: 'SbdValues' });
 
-export const CcaValues = z.object({ classes: z.array(CcaClass).optional() }).meta({ id: 'CcaValues' });
+const Class13LeaseholdLayer = z
+  .object({
+    description: z.string().optional(),
+    capitalCost: z.number().optional(),
+    leaseEnd: z
+      .string()
+      .optional()
+      .describe(
+        'The date the lease is deemed to terminate. The engine derives the Schedule III ' +
+          'period count from this and the tax year start — the number of 12-month periods ' +
+          'is computed, not typed in.',
+      ),
+    firstRenewalEnd: z
+      .string()
+      .optional()
+      .describe(
+        'Where the lease grants renewal rights, the end of the term NEXT SUCCEEDING the ' +
+          'one this cost was incurred in (Schedule III s.3(b)) — the first renewal only. ' +
+          'When entered, this replaces leaseEnd for the period calculation.',
+      ),
+    isFirstYear: z
+      .boolean()
+      .optional()
+      .describe('This is the layer’s first tax year — triggers the Reg 1100(2) UCC-ceiling reduction.'),
+    aiip: z.boolean().optional().describe('Accelerated investment incentive property — exempt from the 1100(2) reduction.'),
+    claimedToDate: z.number().optional().describe('CCA already claimed on this layer in prior years.'),
+    proceeds: z.number().optional().describe('Disposition proceeds attributed to this layer.'),
+  })
+  .meta({ id: 'Class13LeaseholdLayer' });
+
+const Class14LimitedLifeProperty = z
+  .object({
+    description: z.string().optional(),
+    capitalCost: z.number().optional(),
+    lifeDaysAtAcquisition: z
+      .number()
+      .optional()
+      .describe(
+        'Days of life the property had REMAINING when the capital cost was incurred — ' +
+          'not its total life, and not the days left today (Reg 1100(1)(c) fixes the ' +
+          'denominator at acquisition).',
+      ),
+  })
+  .meta({ id: 'Class14LimitedLifeProperty' });
+
+export const CcaValues = z
+  .object({
+    classes: z.array(CcaClass).optional(),
+    class13Layers: z
+      .array(Class13LeaseholdLayer)
+      .optional()
+      .describe('NEW class 13 leasehold-interest layers added this tax year (the full Schedule III mechanic).'),
+    class13OpeningUCC: z.number().optional().describe('Class 13 undepreciated capital cost before this year’s deduction.'),
+    class13Claim: z.number().optional().describe('Class 13 amount to claim; blank = the maximum.'),
+    class14Properties: z
+      .array(Class14LimitedLifeProperty)
+      .optional()
+      .describe('NEW class 14 limited-life intangible properties added this tax year.'),
+    class14OpeningUCC: z.number().optional().describe('Class 14 undepreciated capital cost before this year’s deduction.'),
+    class14Claim: z.number().optional().describe('Class 14 amount to claim; blank = the maximum.'),
+  })
+  .meta({ id: 'CcaValues' });
 
 export const CapitalGainsValues = z
   .object({ dispositions: z.array(Disposition).optional() })
@@ -431,6 +548,8 @@ export const CapitalValues = z
 
 // A same-named TS type per exported schema — see common.ts's own comment on this pattern.
 export type CcaClass = z.infer<typeof CcaClass>;
+export type Class13LeaseholdLayer = z.infer<typeof Class13LeaseholdLayer>;
+export type Class14LimitedLifeProperty = z.infer<typeof Class14LimitedLifeProperty>;
 export type At1DispositionCategory = z.infer<typeof At1DispositionCategory>;
 export type Disposition = z.infer<typeof Disposition>;
 export type Shareholder = z.infer<typeof Shareholder>;

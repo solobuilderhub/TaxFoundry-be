@@ -121,9 +121,28 @@ export function runT2Compute(input: unknown, actor = 'engine'): T2ComputeOutput 
             : []),
         ]
       : []),
+    // `ccaClaimed` is the SAME combined total `federal-t2.ts` files under
+    // Schedule 1 line 403 — ordinary declining-balance classes PLUS a new
+    // class 13 leasehold layer / class 14 property (each its own mechanic,
+    // not part of `b.cca`) PLUS the class 14.1 transitional additional
+    // allowance. Emitted whenever ANY of the three exist, not gated on
+    // `b.cca` alone — a return with only a new class 13 layer and no
+    // ordinary classes previously filed no `ccaClaimed` field at all.
+    ...(b.cca || b.class13 || b.class14 || b.class141AdditionalAllowance
+      ? [
+          {
+            line: 'ccaClaimed',
+            value:
+              (b.cca?.totalCca ?? 0) +
+              (b.class13?.ccaClaimed ?? 0) +
+              (b.class14?.ccaClaimed ?? 0) +
+              (b.class141AdditionalAllowance?.additionalAllowance ?? 0),
+            provenance: 'engine' as const,
+          },
+        ]
+      : []),
     ...(b.cca
       ? [
-          { line: 'ccaClaimed', value: b.cca.totalCca, provenance: 'engine' as const },
           ...(b.cca.totalRecapture > 0
             ? [{ line: 'ccaRecapture', value: b.cca.totalRecapture, provenance: 'engine' as const }]
             : []),

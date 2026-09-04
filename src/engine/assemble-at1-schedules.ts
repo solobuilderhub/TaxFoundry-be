@@ -39,6 +39,7 @@ import {
   albertaCurrentYearLoss,
   albertaDispositionAdjustments,
   albertaReserveDifference,
+  albertaResourceDeductionDifference,
   computeAlbertaSbd,
   computeAlbertaSchedule13,
   computeAlbertaSchedule17,
@@ -52,6 +53,7 @@ import {
   computeSchedule20,
   type FederalT2Result,
   type IegAgreementInput,
+  type LimitedPartnershipLossesResult,
   reconcileAlbertaNetIncome,
   type Schedule12FilingInput,
   type Schedule12Result,
@@ -65,7 +67,6 @@ import { assembleSchedule6 } from './at1-schedule-composers/schedule-6-compose.j
 import { assembleSchedule7 } from './at1-schedule-composers/schedule-7-compose.js';
 import { assembleSchedule8 } from './at1-schedule-composers/schedule-8-compose.js';
 import { assembleSchedule9 } from './at1-schedule-composers/schedule-9-compose.js';
-import { assembleSchedule11 } from './at1-schedule-composers/schedule-11-compose.js';
 import { assembleSchedule15 } from './at1-schedule-composers/schedule-15-compose.js';
 import type {
   AlbertaAssociatedCorpMember,
@@ -628,18 +629,15 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
 
   const charitableCurrentYear = num(fed.charitableDonations);
   const charitableOpening = num(fed.openingDonationPool);
-  // `fed.charitableDonations` is federal's already-COMBINED total (charitable
-  // + cultural + ecological — see `scheduleTwo` in `assemble-t2-input.ts`),
-  // so the cultural/ecological split this default needs is only available on
-  // `ri.donations` directly, never on `fed`. `assembleT2Input` never
-  // separately exposes `cultural`/`ecological` on the assembled federal
-  // input, so reading them off `fed` here was always undefined — this
-  // default silently computed 0, not federal's actual cultural + ecological
-  // total, until this fix.
-  const donations = ri.donations ?? {};
+  // `fed.charitableDonations` is CHARITABLE ONLY and `fed.culturalEcologicalGifts`
+  // is the combined cultural + ecological total — two separate fields since
+  // `scheduleTwo` in `assemble-t2-input.ts` stopped combining them (they're
+  // capped differently federally: only charitable is limited to 75% of net
+  // income). Both are real `fed` fields now; no need to reach into `ri.donations`
+  // directly for this default any more.
   const giftsCurrentYear = present(d.giftsCurrentYear)
     ? num(d.giftsCurrentYear)
-    : num(donations.cultural) + num(donations.ecological);
+    : num(fed.culturalEcologicalGifts);
   const giftsOpening = num(d.giftsOpening);
 
   const hasCharitable = charitableCurrentYear !== 0 || charitableOpening !== 0;
@@ -719,6 +717,77 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
 
 // ── Schedule 12 — reconciliation (composed LAST — needs 13/17/18/21's results) ──
 
+/**
+ * Schedule 12 lines 022/023 (Depletion), 026/027 (CEE), 028/029 (CDE),
+ * 030/031 (Foreign exploration/development), 032/033 (COGPE) — AT1 Schedule
+ * 15's own five claim totals, verified against the rendered
+ * `AT1SCH12-income-loss-reconciliation-TRA11732.pdf` page 1: Depletion =
+ * Schedule 15 lines 007+019+031 (EDA regular + EDA successor + CMEDB
+ * claims); CEE = 061+081; CDE = 115+141; COGPE = 169+189; Foreign =
+ * 209+221 (FEDE) plus the SFEDE/CFRE per-country claims. Shared between the
+ * net-income adjustment and the filed-payload figures below so both read
+ * from one computation, not two.
+ */
+function aggregateResourceDeductionClaims(
+  resourceDeductions: NonNullable<ReturnType<typeof assembleSchedule15>>,
+) {
+  const r = resourceDeductions;
+  const sumClaims = (rows: readonly { claim: number }[] | undefined) =>
+    (rows ?? []).reduce((s, row) => s + row.claim, 0);
+  return {
+    depletion: (r.eda?.regular.claim ?? 0) + (r.eda?.successor.claim ?? 0) + (r.cmedb?.claim ?? 0),
+    cee: (r.cee?.regular.claim ?? 0) + (r.cee?.successor.claim ?? 0),
+    cde: (r.cde?.regular.claim ?? 0) + (r.cde?.successor.claim ?? 0),
+    cogpe: (r.ccogpe?.regular.claim ?? 0) + (r.ccogpe?.successor.claim ?? 0),
+    foreign:
+      (r.fede?.regular.claim ?? 0) +
+      (r.fede?.successor.claim ?? 0) +
+      sumClaims(r.sfede?.regular) +
+      sumClaims(r.sfede?.successor) +
+      sumClaims(r.cfre?.regular) +
+      sumClaims(r.cfre?.successor),
+  };
+}
+
+function resourceDeductionAdjustments(
+  alberta: ReturnType<typeof aggregateResourceDeductionClaims>,
+  federal: FederalT2Result,
+) {
+  const fed = federal.resourceDeductions;
+  return [
+    albertaResourceDeductionDifference(
+      'Depletion',
+      'AT1 Sch 15 vs T2 Sch 12 (022/023)',
+      alberta.depletion,
+      fed?.depletionClaim ?? 0,
+    ),
+    albertaResourceDeductionDifference(
+      'Canadian exploration expenses',
+      'AT1 Sch 15 vs T2 Sch 12 (026/027)',
+      alberta.cee,
+      fed?.ceeClaim ?? 0,
+    ),
+    albertaResourceDeductionDifference(
+      'Canadian development expenses',
+      'AT1 Sch 15 vs T2 Sch 12 (028/029)',
+      alberta.cde,
+      fed?.cdeClaim ?? 0,
+    ),
+    albertaResourceDeductionDifference(
+      'Foreign exploration and development expenses',
+      'AT1 Sch 15 vs T2 Sch 12 (030/031)',
+      alberta.foreign,
+      fed?.foreignClaim ?? 0,
+    ),
+    albertaResourceDeductionDifference(
+      'Canadian oil and gas property expenses',
+      'AT1 Sch 15 vs T2 Sch 12 (032/033)',
+      alberta.cogpe,
+      fed?.cogpeClaim ?? 0,
+    ),
+  ];
+}
+
 function scheduleTwelve(
   federal: FederalT2Result,
   cca: ReturnType<typeof scheduleThirteen>,
@@ -728,10 +797,20 @@ function scheduleTwelve(
   capitalContinuity: ReturnType<typeof computeLossContinuity> | undefined,
   restrictedFarmContinuity: ReturnType<typeof computeLossContinuity> | undefined,
   farmContinuity: ReturnType<typeof computeLossContinuity> | undefined,
+  limitedPartnershipLosses: LimitedPartnershipLossesResult | undefined,
+  // Area B, lines 056-059 — undefined on the first (pre-donations) call.
+  donations: ReturnType<typeof scheduleTwenty> | undefined,
+  culturalEcologicalGiftsFederal: number,
+  // Area A, lines 022/023, 026-033 — AT1 Schedule 15 vs federal Schedule 12.
+  resourceDeductions: ReturnType<typeof assembleSchedule15> | undefined,
 ): {
   result: Schedule12Result;
   filingInput: Schedule12FilingInput;
 } {
+  const albertaResourceDeductionClaims = resourceDeductions
+    ? aggregateResourceDeductionClaims(resourceDeductions)
+    : undefined;
+
   const adjustments = [
     ...(cca
       ? albertaCcaScheduleAdjustments(
@@ -768,24 +847,40 @@ function scheduleTwelve(
           ),
         ]
       : []),
+    ...(albertaResourceDeductionClaims
+      ? resourceDeductionAdjustments(albertaResourceDeductionClaims, federal)
+      : []),
   ];
 
   const result = reconcileAlbertaNetIncome(federal.netIncomeForTax, adjustments);
 
-  const lossDeductions = schedule12LossDeductions(
-    {
-      nonCapital: nonCapitalContinuity,
-      capital: capitalContinuity,
-      restrictedFarm: restrictedFarmContinuity,
-      farm: farmContinuity,
+  const lossDeductions = {
+    ...schedule12LossDeductions(
+      {
+        nonCapital: nonCapitalContinuity,
+        capital: capitalContinuity,
+        restrictedFarm: restrictedFarmContinuity,
+        farm: farmContinuity,
+      },
+      {
+        nonCapital: federal.losses.nonCapital,
+        capital: federal.losses.netCapital,
+        restrictedFarm: federal.losses.restrictedFarm,
+        farm: federal.losses.farm,
+      },
+    ),
+    // 012072/073 — NOT `LossContinuityResult`-shaped (one row per
+    // partnership, not a pool), so built directly rather than through
+    // `schedule12LossDeductions`. Alberta = Schedule 21's own total when its
+    // limited-partnership table has rows; otherwise federal's own applied
+    // figure — same fallback shape as the four pools above, per the spec.
+    limitedPartnership: {
+      alberta: limitedPartnershipLosses
+        ? limitedPartnershipLosses.totalApplied
+        : (federal.losses.limitedPartnershipApplied ?? 0),
+      federal: federal.losses.limitedPartnershipApplied ?? 0,
     },
-    {
-      nonCapital: federal.losses.nonCapital,
-      capital: federal.losses.netCapital,
-      restrictedFarm: federal.losses.restrictedFarm,
-      farm: federal.losses.farm,
-    },
-  );
+  };
 
   const filingInput = {
     federalNetIncomeForTax: federal.netIncomeForTax,
@@ -815,7 +910,58 @@ function scheduleTwelve(
           },
         }
       : {}),
+    ...(albertaResourceDeductionClaims
+      ? {
+          depletion: {
+            alberta: albertaResourceDeductionClaims.depletion,
+            federal: federal.resourceDeductions?.depletionClaim ?? 0,
+          },
+          cee: {
+            alberta: albertaResourceDeductionClaims.cee,
+            federal: federal.resourceDeductions?.ceeClaim ?? 0,
+          },
+          cde: {
+            alberta: albertaResourceDeductionClaims.cde,
+            federal: federal.resourceDeductions?.cdeClaim ?? 0,
+          },
+          foreignExploration: {
+            alberta: albertaResourceDeductionClaims.foreign,
+            federal: federal.resourceDeductions?.foreignClaim ?? 0,
+          },
+          cogpe: {
+            alberta: albertaResourceDeductionClaims.cogpe,
+            federal: federal.resourceDeductions?.cogpeClaim ?? 0,
+          },
+        }
+      : {}),
     lossDeductions,
+    // Area B, 056-059 — same "always both sides once the pool exists" shape
+    // as lossDeductions above. `donations.charitable`/`.gifts` are each only
+    // present when Schedule 20 actually computed that pool (real activity),
+    // matching `alwaysPair`'s own "omit when this composer has no data at
+    // all" rule in `schedule12Values`.
+    ...((donations?.charitable ?? donations?.gifts)
+      ? {
+          donations: {
+            ...(donations.charitable
+              ? {
+                  charitable: {
+                    alberta: donations.charitable.amountApplied,
+                    federal: federal.donations?.donationsClaimed ?? 0,
+                  },
+                }
+              : {}),
+            ...(donations.gifts
+              ? {
+                  gifts: {
+                    alberta: donations.gifts.amountApplied,
+                    federal: culturalEcologicalGiftsFederal,
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
   };
 
   return { result, filingInput };
@@ -1003,7 +1149,6 @@ export function assembleAt1Schedules(
   const royaltySupplemental = assembleSchedule7(ri);
   const politicalContributions = assembleSchedule8(ri);
   const sredTaxCredit9 = assembleSchedule9(ri);
-  const manufacturingProcessing = assembleSchedule11(fed, ri);
   const resourceDeductions = assembleSchedule15(ri);
 
   // Schedule 12 needs 13/17/18's results AND the loss continuities' results —
@@ -1021,6 +1166,10 @@ export function assembleAt1Schedules(
     undefined,
     undefined,
     undefined,
+    undefined,
+    undefined,
+    0,
+    resourceDeductions,
   );
 
   const losses = scheduleTwentyOne(
@@ -1034,8 +1183,9 @@ export function assembleAt1Schedules(
   );
   const donations = scheduleTwenty(fed, ri, schedule12Result);
 
-  // Re-run Schedule 12 once the continuities exist, so lines 064-071 (losses
-  // of preceding years deducted) are populated too.
+  // Re-run Schedule 12 once the continuities exist, so lines 064-073 (losses
+  // of preceding years deducted, including limited partnership losses) are
+  // populated too.
   const { filingInput: reconciliation } = scheduleTwelve(
     federal,
     cca,
@@ -1045,6 +1195,10 @@ export function assembleAt1Schedules(
     losses?.capital,
     losses?.restrictedFarm,
     losses?.farm,
+    losses?.limitedPartnershipLosses,
+    donations,
+    fed.culturalEcologicalGifts ?? 0,
+    resourceDeductions,
   );
 
   const schedules: AlbertaReturnInput['schedules'] = {
@@ -1057,10 +1211,19 @@ export function assembleAt1Schedules(
     ...(politicalContributions ? { politicalContributions } : {}),
     ...(sredTaxCredit9 ? { sredTaxCredit: sredTaxCredit9 } : {}),
     ...(lossCarryback ? { lossCarryback } : {}),
-    ...(manufacturingProcessing ? { manufacturingProcessing } : {}),
-    // Schedule 12 is filed only when at least one reconciling item exists —
-    // an all-agree reconciliation is not a divergence to disclose.
-    ...(cca || reserves || dispositions || losses ? { reconciliation } : {}),
+    // Schedule 12 is filed when at least one reconciling item exists. Most
+    // of these (cca/reserves/dispositions/losses) are Area A pairs, omitted
+    // when Alberta agrees with federal — genuinely "nothing to disclose".
+    // `donations` is different: Area B's 056-059 are mandatory-disclosure,
+    // always-both-sides lines (see `Schedule12FilingInput.donations`'s own
+    // doc comment) that populate whenever real donation/gift activity
+    // exists AT ALL, whether or not Alberta diverges from federal — so it
+    // belongs in this gate too, or a donations-only return never produces a
+    // Schedule 12 payload despite `reconciliation.donations` genuinely
+    // having data.
+    ...(cca || reserves || dispositions || losses || donations || resourceDeductions
+      ? { reconciliation }
+      : {}),
     ...(cca ? { cca } : {}),
     ...(resourceDeductions ? { resourceDeductions } : {}),
     ...(reserves ? { reserves } : {}),

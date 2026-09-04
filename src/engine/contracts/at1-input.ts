@@ -26,7 +26,11 @@ export const AlbertaValues = z
   .object({
     grossRevenue: z.number().optional().describe('000047 — gross revenue per the financial statements.'),
     totalAssets: z.number().optional().describe('000048 — total assets. Must equal federal GIFI 2599.'),
-    associatedWithCcpcs: YesNo.optional().describe('000001 — associated with one or more CCPCs?'),
+    associatedWithCcpcs: YesNo.optional().describe(
+      '000001 — associated with one or more Canadian-controlled private corporations? Not derived ' +
+        "from Schedule 1's own association test: that derivation is undefined whenever the " +
+        'corporation is not claiming the Alberta SBD, but this jacket line is unconditionally mandatory.',
+    ),
     windUpOfSubsidiary: YesNo.optional().describe(
       '000031 — wind-up of a subsidiary under ITA s.88 during the year?',
     ),
@@ -771,34 +775,6 @@ export const AlbertaSredCredit9Values = z
   })
   .meta({ id: 'AlbertaSredCredit9Values' });
 
-// ── AT1 Schedule 11 — Alberta Manufacturing and Processing Profits Deduction (TRA §3.2.3.12) ──
-
-export const AlbertaManufacturing11Values = z
-  .object({
-    manufacturingGrossRevenue: z.number().optional().describe('For the spec’s 10% manufacturing-gross-revenue test (lines 9138-9142).'),
-    totalGrossRevenue: z.number().optional().describe('Total gross revenue for the year, for the same 10% test.'),
-    isSmallManufacturingCorp: YesNo.optional().describe(
-      'Whether the corp qualifies as a "small manufacturing corp" per the AT1 Guide criteria. ' +
-        'When "yes", lines 031-039 below do not apply — the form itself says they "must not exist" for a small manufacturer.',
-    ),
-    smallManufacturerAmpp: z.number().optional().describe(
-      'Line 042 supplied directly for a small manufacturing corp. The transcribed spec range ' +
-        'gives no alternative formula for this case, so none is derived — enter the figure per the AT1 Guide.',
-    ),
-    federalAdjubi: z.number().optional().describe('027130 — federal Schedule 27 ADJUBI. Used for line 001 unless Alberta calculates it differently.'),
-    albertaAdjubiLine112: z.number().optional().describe('Schedule 12, line 112 — only when Alberta computes ADJUBI differently than federal.'),
-    albertaAdjubiLine114: z.number().optional().describe('Schedule 12, line 114 — only when Alberta computes ADJUBI differently than federal.'),
-    isCcpc: YesNo.optional().describe('000029 = 1 or 2 — a Canadian-controlled private corporation. Gates line 013.'),
-    schedule12Exists: YesNo.optional().describe('Whether an Alberta Schedule 12 exists for this return.'),
-    albertaAggregateInvestmentIncome: z.number().optional().describe('Aggregate investment income for Alberta purposes, used when Schedule 12 exists.'),
-    federalAggregateInvestmentIncome: z.number().optional().describe('fed 200440 — federal aggregate investment income, used when Schedule 12 does not exist.'),
-    costOfCapital: z.number().optional().describe('011031 — Cost of Capital. Must equal fed 027140 for a corp other than a small manufacturer.'),
-    albertaCostOfCapital: z.number().optional().describe('011033 — the Alberta portion of Cost of Capital. Cannot exceed line 031.'),
-    costOfLabour: z.number().optional().describe('011037 — Cost of Labour. Must equal fed 027160 for a corp other than a small manufacturer.'),
-    albertaCostOfLabour: z.number().optional().describe('011039 — the Alberta portion of Cost of Labour. Cannot exceed line 037.'),
-  })
-  .meta({ id: 'AlbertaManufacturing11Values' });
-
 // ── AT1 Schedule 15 — Alberta Resource Related Deductions (TRA §3.2.3.16) ──
 //
 // Every regular/successor pool side is its own top-level key on
@@ -1127,7 +1103,6 @@ export type PoliticalContribution8Row = z.infer<typeof PoliticalContribution8Row
 export type AlbertaPoliticalContributions8Values = z.infer<typeof AlbertaPoliticalContributions8Values>;
 export type AlbertaSredCredit9GroupMember = z.infer<typeof AlbertaSredCredit9GroupMember>;
 export type AlbertaSredCredit9Values = z.infer<typeof AlbertaSredCredit9Values>;
-export type AlbertaManufacturing11Values = z.infer<typeof AlbertaManufacturing11Values>;
 export type EdaRegularRow = z.infer<typeof EdaRegularRow>;
 export type EdaSuccessorRow = z.infer<typeof EdaSuccessorRow>;
 export type CmedbRow = z.infer<typeof CmedbRow>;

@@ -60,20 +60,6 @@ const str = (v: unknown): string | undefined => {
   return s === '' ? undefined : s;
 };
 
-/**
- * Spread a computed field in ONLY when the snapshot carries it. `fieldValue`
- * returns 0 for an absent line, and a zero here would satisfy the mandatory
- * check with a figure nobody computed.
- */
-const num = (
-  fields: readonly { line: string; value: unknown }[],
-  key: string,
-  line: string,
-): Record<string, number> => {
-  const f = fields.find((x) => x.line === line);
-  return f && Number.isFinite(Number(f.value)) ? { [key]: Number(f.value) } : {};
-};
-
 /** The same rule for a figure carried on the frozen filing input. */
 const frozenNum = (
   frozen: Record<string, unknown> | undefined,
@@ -238,14 +224,18 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
     certificationDate: new Date(),
 
     // Figures the AT1 restates from the federal return.
-    ...num(fields, 'activeBusinessIncome', 'albertaActiveBusinessIncome'),
-    ...num(fields, 'federalTaxableIncome', 'federalTaxableIncome'),
     ...frozenNum(ab, 'grossRevenue'),
     ...frozenNum(ab, 'totalAssets'),
 
     // The jacket's yes/no answers. An UNANSWERED question stays undefined so the
     // line is dropped rather than answered "No" on the corporation's behalf —
     // the filing path then refuses, which is the correct outcome.
+    //
+    // `associatedWithCcpcs` (000001) is asked here directly rather than reused
+    // from Schedule 1's own `isAssociated` derivation (`assemble-at1-schedules.ts`'s
+    // `scheduleOne`): that derivation is undefined whenever the corporation
+    // isn't claiming the Alberta SBD at all, but jacket line 001 is
+    // unconditionally mandatory regardless of whether Schedule 1 applies.
     ...flag(ab, 'associatedWithCcpcs'),
     ...flag(ab, 'windUpOfSubsidiary'),
     ...flag(ab, 'firstYearAfterAmalgamation'),

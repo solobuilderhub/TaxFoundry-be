@@ -17,15 +17,23 @@
  */
 
 import type {
+  AdjustedAggregateInvestmentIncomeInput,
+  AggregateInvestmentIncomeInput,
   CapitalDisposition,
   CcaClassInput,
+  Class13Input,
+  Class14Input,
   PermanentEstablishment,
   ReserveContinuityRow,
+  Schedule12ResourceDeductionsInput,
 } from '@classytic/ca-tax/t2';
-import { SCHEDULE_1_LINE_BY_NUMBER } from '@classytic/ca-tax/t2';
+import { leaseholdPeriods } from '@classytic/ca-tax/t2';
+import { dividendsDeductibleS112, SCHEDULE_1_LINE_BY_NUMBER } from '@classytic/ca-tax/t2';
 import type {
   At1DispositionCategory,
   CcaClass,
+  Class13LeaseholdLayer,
+  Class14LimitedLifeProperty,
   Disposition,
   PermanentEstablishmentValues,
   ReserveRow,
@@ -109,6 +117,65 @@ function scheduleEight(ri: Ri) {
   return ccaClasses.length ? { ccaClasses } : {};
 }
 
+/**
+ * Schedule 8 — a NEW class 13 leasehold layer or class 14 property added THIS
+ * year, the full per-layer/per-property mechanic (Reg 1100(1)(b)/Schedule III
+ * and Reg 1100(1)(c) respectively) — distinct from `scheduleEight` above,
+ * which only ever draws down an EXISTING 13/14 opening balance and refuses a
+ * current-year addition (see `computeCcaClass`'s own doc comment in
+ * `schedule8.ts`). The engine needs each layer's Schedule III PERIOD count,
+ * not a lease-end date — `leaseholdPeriods` derives it here from the tax
+ * year start and the lease dates the preparer actually has, rather than
+ * asking them to count 12-month periods by hand.
+ */
+function scheduleEightNewLayers(
+  ri: Ri,
+  engagement: EngagementLike,
+): { class13?: Class13Input; class14?: Class14Input } {
+  const cca = ri.cca ?? {};
+  const taxYearStart = iso(engagement.taxYearStart);
+
+  const layers = (cca.class13Layers ?? [])
+    .filter((l: Class13LeaseholdLayer) => l?.capitalCost)
+    .map((l: Class13LeaseholdLayer) => ({
+      ...(l.description ? { description: l.description } : {}),
+      capitalCost: num(l.capitalCost),
+      periods: leaseholdPeriods(
+        taxYearStart,
+        String(l.leaseEnd ?? ''),
+        l.firstRenewalEnd ? String(l.firstRenewalEnd) : undefined,
+      ),
+      ...(l.claimedToDate != null ? { claimedToDate: num(l.claimedToDate) } : {}),
+      ...(l.proceeds != null ? { proceeds: num(l.proceeds) } : {}),
+      ...(l.isFirstYear ? { isFirstYear: true } : {}),
+      ...(l.aiip ? { aiip: true } : {}),
+    }));
+  const class13: Class13Input | undefined = layers.length
+    ? {
+        layers,
+        openingUCC: num(cca.class13OpeningUCC),
+        ...(cca.class13Claim != null ? { claim: num(cca.class13Claim) } : {}),
+      }
+    : undefined;
+
+  const properties = (cca.class14Properties ?? [])
+    .filter((p: Class14LimitedLifeProperty) => p?.capitalCost)
+    .map((p: Class14LimitedLifeProperty) => ({
+      ...(p.description ? { description: p.description } : {}),
+      capitalCost: num(p.capitalCost),
+      lifeDaysAtAcquisition: num(p.lifeDaysAtAcquisition),
+    }));
+  const class14: Class14Input | undefined = properties.length
+    ? {
+        properties,
+        openingUCC: num(cca.class14OpeningUCC),
+        ...(cca.class14Claim != null ? { claim: num(cca.class14Claim) } : {}),
+      }
+    : undefined;
+
+  return { ...(class13 ? { class13 } : {}), ...(class14 ? { class14 } : {}) };
+}
+
 /** Schedule 6 — capital dispositions. */
 function scheduleSix(ri: Ri) {
   const dispositions = (ri.capitalGains?.dispositions ?? [])
@@ -126,13 +193,32 @@ function scheduleSix(ri: Ri) {
   return dispositions.length ? { capitalDispositions: dispositions } : {};
 }
 
-/** Schedule 2 — charitable donations (engine applies the 75% limit + carryforward). */
+/**
+ * Schedule 2 — charitable donations AND gifts.
+ *
+ * Two genuinely different deductions, not one combined pool: charitable
+ * donations are capped at 75% of net income for tax (the engine's own
+ * `computeSchedule2` applies that limit); cultural property and
+ * ecologically sensitive land gifts under ITA s.110.1(1)(b)/(c) are NOT
+ * income-limited at all. Combining all three before the cap (the previous
+ * shape here) meant a corporation with a large cultural or ecological gift
+ * could have it silently capped alongside charitable donations — an
+ * understatement, the dangerous direction for a deduction.
+ */
 function scheduleTwo(ri: Ri) {
   const don = ri.donations ?? {};
-  const charitableDonations = num(don.charitable) + num(don.cultural) + num(don.ecological);
-  if (charitableDonations <= 0 && num(don.openingDonationPool) <= 0) return {};
+  const charitableDonations = num(don.charitable);
+  const culturalEcologicalGifts = num(don.cultural) + num(don.ecological);
+  if (
+    charitableDonations <= 0 &&
+    culturalEcologicalGifts <= 0 &&
+    num(don.openingDonationPool) <= 0
+  ) {
+    return {};
+  }
   return {
-    charitableDonations,
+    ...(charitableDonations > 0 ? { charitableDonations } : {}),
+    ...(culturalEcologicalGifts > 0 ? { culturalEcologicalGifts } : {}),
     ...(don.openingDonationPool != null
       ? { openingDonationPool: num(don.openingDonationPool) }
       : {}),
@@ -142,10 +228,7 @@ function scheduleTwo(ri: Ri) {
 /** Division C — s.112 dividend deduction only (donations→S2, losses→S4 continuity). */
 function divisionC(ri: Ri) {
   const divisionCDeductions = [
-    {
-      label: 'Taxable dividends deductible s.112 (S3)',
-      amount: num(ri.dividends?.taxableReceivedConnected),
-    },
+    dividendsDeductibleS112(num(ri.dividends?.taxableReceivedConnected)),
   ].filter((l) => l.amount > 0);
   return { divisionCDeductions };
 }
@@ -270,7 +353,83 @@ function scheduleSeven(ri: Ri, bookNetIncome: number) {
     // one on S7 — otherwise omit it so Schedule 33 (the `capital` slice) can derive
     // it. An unconditional 0 here would beat the S33 figure (`0 ?? s33` → 0).
     ...(sbd.taxableCapital != null ? { taxableCapital: num(sbd.taxableCapital) } : {}),
-    aaii: num(sbd.aaii),
+    // Conditional, NOT `aaii: num(sbd.aaii)` unconditionally: an explicit 0
+    // would beat `aaiiDetail`'s derived figure the same way an unconditional
+    // `taxableCapital: 0` would have beaten Schedule 33's derivation above.
+    ...(sbd.aaii != null ? { aaii: num(sbd.aaii) } : {}),
+    ...(sbd.aaiiDetail
+      ? {
+          adjustedAggregateInvestmentIncomeDetail: {
+            ...(sbd.aaiiDetail.taxableCapitalGains != null
+              ? { taxableCapitalGains: num(sbd.aaiiDetail.taxableCapitalGains) }
+              : {}),
+            ...(sbd.aaiiDetail.allowableCapitalLosses != null
+              ? { allowableCapitalLosses: num(sbd.aaiiDetail.allowableCapitalLosses) }
+              : {}),
+            ...(sbd.aaiiDetail.incomeFromProperty != null
+              ? { incomeFromProperty: num(sbd.aaiiDetail.incomeFromProperty) }
+              : {}),
+            ...(sbd.aaiiDetail.exemptIncome != null
+              ? { exemptIncome: num(sbd.aaiiDetail.exemptIncome) }
+              : {}),
+            ...(sbd.aaiiDetail.agriInvestFundReceived != null
+              ? { agriInvestFundReceived: num(sbd.aaiiDetail.agriInvestFundReceived) }
+              : {}),
+            ...(sbd.aaiiDetail.dividendsFromConnectedCorporations != null
+              ? {
+                  dividendsFromConnectedCorporations: num(
+                    sbd.aaiiDetail.dividendsFromConnectedCorporations,
+                  ),
+                }
+              : {}),
+            ...(sbd.aaiiDetail.trustPropertyIncome != null
+              ? { trustPropertyIncome: num(sbd.aaiiDetail.trustPropertyIncome) }
+              : {}),
+            ...(sbd.aaiiDetail.lossesFromProperty != null
+              ? { lossesFromProperty: num(sbd.aaiiDetail.lossesFromProperty) }
+              : {}),
+            ...(sbd.aaiiDetail.subsection91_4Deduction != null
+              ? { subsection91_4Deduction: num(sbd.aaiiDetail.subsection91_4Deduction) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(sbd.aggregateInvestmentIncome != null
+      ? { aggregateInvestmentIncome: num(sbd.aggregateInvestmentIncome) }
+      : {}),
+    ...(sbd.aiiDetail
+      ? {
+          aggregateInvestmentIncomeDetail: {
+            ...(sbd.aiiDetail.taxableCapitalGains != null
+              ? { taxableCapitalGains: num(sbd.aiiDetail.taxableCapitalGains) }
+              : {}),
+            ...(sbd.aiiDetail.allowableCapitalLosses != null
+              ? { allowableCapitalLosses: num(sbd.aiiDetail.allowableCapitalLosses) }
+              : {}),
+            ...(sbd.aiiDetail.netCapitalLossesClaimed != null
+              ? { netCapitalLossesClaimed: num(sbd.aiiDetail.netCapitalLossesClaimed) }
+              : {}),
+            ...(sbd.aiiDetail.incomeFromProperty != null
+              ? { incomeFromProperty: num(sbd.aiiDetail.incomeFromProperty) }
+              : {}),
+            ...(sbd.aiiDetail.exemptIncome != null
+              ? { exemptIncome: num(sbd.aiiDetail.exemptIncome) }
+              : {}),
+            ...(sbd.aiiDetail.agriInvestFundReceived != null
+              ? { agriInvestFundReceived: num(sbd.aiiDetail.agriInvestFundReceived) }
+              : {}),
+            ...(sbd.aiiDetail.taxableDividendsDeductible != null
+              ? { taxableDividendsDeductible: num(sbd.aiiDetail.taxableDividendsDeductible) }
+              : {}),
+            ...(sbd.aiiDetail.trustPropertyIncome != null
+              ? { trustPropertyIncome: num(sbd.aiiDetail.trustPropertyIncome) }
+              : {}),
+            ...(sbd.aiiDetail.lossesFromProperty != null
+              ? { lossesFromProperty: num(sbd.aiiDetail.lossesFromProperty) }
+              : {}),
+          },
+        }
+      : {}),
     ...(num(sbd.zetmIncome) > 0 ? { zetmIncome: num(sbd.zetmIncome) } : {}),
   };
 }
@@ -411,6 +570,111 @@ function scheduleEightyEight(ri: Ri) {
 }
 
 /**
+ * Schedule 12 — resource-related deductions (depletion/CEE/CDE/COGPE/foreign).
+ *
+ * The ONLY place this app collects these figures today is
+ * `ri.albertaResourceDeductions15` — the AT1-only "Resource Related
+ * Deductions (S15)" guided-editor page (`programs: ["AT1"]`), which already
+ * has a `federal<X>` field for every figure this schedule needs (it exists
+ * to give AT1's own Schedule 15 reconciliation a federal baseline to diff
+ * against). Those `federal<X>` figures were being collected and then
+ * discarded — read only by the AT1 diff, never fed into the federal
+ * computation itself, so federal Schedule 1 lines 340-345 were always 0
+ * even when a preparer had entered real federal pool data here. This
+ * function closes that gap by reusing the SAME data as this module's own
+ * federal input.
+ *
+ * A real, disclosed limitation: because the source page is AT1-only, a
+ * PURE T2 (non-AT1) filer currently has no guided-editor surface to enter
+ * resource deductions at all — `ri.albertaResourceDeductions15` will always
+ * be empty for them, and this schedule will correctly compute nothing.
+ * Giving pure-T2 filers their own entry point is a separate, not-yet-built
+ * piece of work.
+ *
+ * Per-country SFEDE/CFRE rows are summed into one flat figure per column —
+ * see `computeSchedule12ResourceDeductions`'s own doc comment on why (the
+ * form's per-country allocation is a preparer-side exercise this engine
+ * does not perform).
+ */
+function scheduleTwelve(ri: Ri) {
+  const s15 = ri.albertaResourceDeductions15;
+  if (!s15) return {};
+
+  const sum = (rows: readonly { [k: string]: unknown }[] | undefined, key: string): number =>
+    (rows ?? []).reduce((s, r) => s + num(r[key]), 0);
+
+  const resourceDeductions = {
+    depletion: {
+      edaRegularOpening: num(s15.edaRegular?.federalOpeningBalance),
+      edaSuccessorOpening: num(s15.edaSuccessor?.federalOpeningBalance),
+      cmedbOpening: num(s15.cmedb?.federalOpeningBalance),
+    },
+    cee: {
+      regularOpening: num(s15.ceeRegular?.federalOpeningBalance),
+      regularCurrentYearExpenses: num(s15.ceeRegular?.federalCurrentYearExpenses),
+      regularOtherAdditions: num(s15.ceeRegular?.federalOtherAdditions),
+      regularGovernmentAssistance: num(s15.ceeRegular?.federalGovernmentAssistance),
+      regularOtherDeductions: num(s15.ceeRegular?.federalOtherDeductions),
+      successorOpening: num(s15.ceeSuccessor?.federalOpeningBalance),
+      successorOtherDeductions: num(s15.ceeSuccessor?.federalOtherDeductions),
+    },
+    cde: {
+      regularOpening: num(s15.cdeRegular?.federalOpeningBalance),
+      regularCurrentYearExpenses: num(s15.cdeRegular?.federalCurrentYearExpenses),
+      regularOtherAdditions: num(s15.cdeRegular?.federalOtherAdditions),
+      regularGovernmentAssistance: num(s15.cdeRegular?.federalGovernmentAssistance),
+      regularReceivableOnDisposition: num(s15.cdeRegular?.federalReceivableOnDisposition),
+      regularOtherDeductions: num(s15.cdeRegular?.federalOtherDeductions),
+      successorOpening: num(s15.cdeSuccessor?.federalOpeningBalance),
+      successorOtherDeductions: num(s15.cdeSuccessor?.federalOtherDeductions),
+    },
+    cogpe: {
+      regularOpening: num(s15.ccogpeRegular?.federalOpeningBalance),
+      regularCurrentYearExpenses: num(s15.ccogpeRegular?.federalCurrentYearExpenses),
+      regularOtherAdditions: num(s15.ccogpeRegular?.federalOtherAdditions),
+      regularReceivableOnDisposition: num(s15.ccogpeRegular?.federalReceivableOnDisposition),
+      regularGovernmentAssistance: num(s15.ccogpeRegular?.federalGovernmentAssistance),
+      regularOtherDeductions: num(s15.ccogpeRegular?.federalOtherDeductions),
+      successorOpening: num(s15.ccogpeSuccessor?.federalOpeningBalance),
+      successorReceivableOnDisposition: num(s15.ccogpeSuccessor?.federalReceivableOnDisposition),
+      successorOtherDeductions: num(s15.ccogpeSuccessor?.federalOtherDeductions),
+    },
+    foreignExploration: {
+      regularOpening: num(s15.fedeRegular?.federalOpeningBalance),
+      regularOtherDeductions: num(s15.fedeRegular?.federalOtherDeductions),
+      regularForeignResourceIncome: num(s15.fedeRegular?.federalForeignResourceIncome),
+      successorOpening: num(s15.fedeSuccessor?.federalOpeningBalance),
+      successorOtherDeductions: num(s15.fedeSuccessor?.federalOtherDeductions),
+      successorForeignResourceIncome: num(s15.fedeSuccessor?.federalForeignResourceIncome),
+    },
+    specifiedForeignRegular: {
+      openingBalance: sum(s15.sfedeRegular, 'federalOpeningBalance'),
+      otherDeductions: sum(s15.sfedeRegular, 'federalOtherDeductions'),
+      foreignResourceIncome: sum(s15.sfedeRegular, 'federalForeignResourceIncome'),
+    },
+    specifiedForeignSuccessor: {
+      openingBalance: sum(s15.sfedeSuccessor, 'federalOpeningBalance'),
+      otherDeductions: sum(s15.sfedeSuccessor, 'federalOtherDeductions'),
+      foreignResourceIncome: sum(s15.sfedeSuccessor, 'federalForeignResourceIncome'),
+    },
+    cumulativeForeignRegular: {
+      openingBalance: sum(s15.cfreRegular, 'federalOpeningBalance'),
+      currentYearExpenses: sum(s15.cfreRegular, 'federalCurrentYearExpenses'),
+      otherDeductions: sum(s15.cfreRegular, 'federalOtherDeductions'),
+      foreignResourceIncome: sum(s15.cfreRegular, 'federalForeignResourceIncome'),
+    },
+    cumulativeForeignSuccessor: {
+      openingBalance: sum(s15.cfreSuccessor, 'federalOpeningBalance'),
+      otherDeductions: sum(s15.cfreSuccessor, 'federalOtherDeductions'),
+      foreignResourceIncome: sum(s15.cfreSuccessor, 'federalForeignResourceIncome'),
+    },
+    ...(s15.daysInTaxYear != null ? { daysInTaxYear: num(s15.daysInTaxYear) } : {}),
+  };
+
+  return { resourceDeductions };
+}
+
+/**
  * Schedule 101 / 24 — first return after incorporation, amalgamation or wind-up.
  * The form collects predecessor BNs as one comma-separated string; the engine
  * wants a list, so the split happens at this boundary rather than in the schema.
@@ -464,12 +728,13 @@ export interface AssembledFederalInput {
   schedule1Additions: { line: string; label: string; amount: number }[];
   schedule1Deductions: { line: string; label: string; amount: number }[];
 
-  // Schedule 2 — charitable donations. NOT `donations.cultural` /
-  // `donations.ecological` split out — see this interface's own note on
-  // `ComposedFederalInput` below for why an AT1-only need for that split
-  // must read `ri.donations` directly instead.
+  // Schedule 2 — charitable donations AND gifts, as two SEPARATE figures —
+  // `charitableDonations` (75%-of-income capped) and `culturalEcologicalGifts`
+  // (uncapped, s.110.1(1)(b)/(c)) — see `scheduleTwo`'s own doc comment for
+  // why combining them (the previous shape here) was a real correctness bug.
   charitableDonations?: number;
   openingDonationPool?: number;
+  culturalEcologicalGifts?: number;
 
   // Schedule 3 / Part IV / RDTOH + Schedule 53 GRIP.
   portfolioDividendsReceived: number;
@@ -503,11 +768,17 @@ export interface AssembledFederalInput {
   businessLimit: number;
   associatedMembers?: { name?: string; allocatedLimit: number }[];
   taxableCapital?: number;
-  aaii: number;
+  aaii?: number;
+  adjustedAggregateInvestmentIncomeDetail?: AdjustedAggregateInvestmentIncomeInput;
+  aggregateInvestmentIncome?: number;
+  aggregateInvestmentIncomeDetail?: AggregateInvestmentIncomeInput;
   zetmIncome?: number;
 
   // Schedule 8 — depreciable property by class.
   ccaClasses?: CcaClassInput[];
+  // Schedule 8 — a NEW class 13 leasehold layer / class 14 property added this year.
+  class13?: Class13Input;
+  class14?: Class14Input;
 
   // Schedule 21 — foreign tax credit.
   foreignNonBusinessIncome?: number;
@@ -570,6 +841,10 @@ export interface AssembledFederalInput {
 
   // Division C — s.112 dividend deduction only.
   divisionCDeductions: { label: string; amount: number }[];
+
+  // Schedule 12 — resource-related deductions. See `scheduleTwelve`'s own
+  // doc comment for where this data actually comes from today.
+  resourceDeductions?: Schedule12ResourceDeductionsInput;
 }
 
 /** Assemble the engine's `FederalT2Input` (+ period) from the stored working return. */
@@ -603,6 +878,7 @@ export function assembleT2Input(ri: Ri, engagement: EngagementLike): AssembledFe
     ...scheduleSix(returnInput),
     ...scheduleSeven(returnInput, bookNetIncome),
     ...scheduleEight(returnInput),
+    ...scheduleEightNewLayers(returnInput, engagement),
     ...scheduleTwentyOne(returnInput),
     ...scheduleThirtyOne(returnInput),
     ...scheduleThirteen(returnInput),
@@ -611,6 +887,7 @@ export function assembleT2Input(ri: Ri, engagement: EngagementLike): AssembledFe
     ...eifelFacts(returnInput),
     ...scheduleEightyEight(returnInput),
     ...scheduleOneOhOne(returnInput),
+    ...scheduleTwelve(returnInput),
     ...divisionC(returnInput),
   };
 }
