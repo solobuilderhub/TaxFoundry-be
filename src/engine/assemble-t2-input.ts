@@ -326,6 +326,135 @@ function eifelFacts(ri: Ri) {
     facts.netInterestAndFinancingExpenses = num(e.netInterestAndFinancingExpenses);
   if (e.groupTaxableCapital != null) facts.groupTaxableCapital = num(e.groupTaxableCapital);
   if (e.domesticExceptionApplies === true) facts.domesticExceptionApplies = true;
+  // Schedule 130 itself. Only reached when the excluded-entity gate says the
+  // regime applies, but passed unconditionally — the engine decides, not this.
+  if (e.interestAndFinancingExpenses != null)
+    facts.interestAndFinancingExpenses = num(e.interestAndFinancingExpenses);
+  if (e.interestAndFinancingRevenues != null)
+    facts.interestAndFinancingRevenues = num(e.interestAndFinancingRevenues);
+  if (e.adjustedTaxableIncome != null) facts.adjustedTaxableIncome = num(e.adjustedTaxableIncome);
+  if (e.hasGroupRatioElection != null) facts.hasGroupRatioElection = e.hasGroupRatioElection;
+  if (e.groupRatioAmount != null) facts.groupRatioAmount = num(e.groupRatioAmount);
+  if (e.rifeFromPreviousYears != null)
+    facts.rifeFromPreviousYears = num(e.rifeFromPreviousYears);
+  if (e.partnershipIfeAddBack != null)
+    facts.partnershipIfeAddBack = num(e.partnershipIfeAddBack);
+  const received = (e.receivedCapacity ?? []).filter((r) => r?.amount != null);
+  if (received.length > 0)
+    facts.receivedCapacity = received.map((r) => ({
+      ...(r.entityName ? { entityName: r.entityName } : {}),
+      ...(r.accountNumber ? { accountNumber: r.accountNumber } : {}),
+      ...(r.taxYearEnd ? { taxYearEnd: r.taxYearEnd } : {}),
+      amount: num(r.amount),
+    }));
+  const vintages = (e.priorYearExcessCapacity ?? []).filter((v) => v?.yearsAgo != null);
+  if (vintages.length > 0)
+    facts.priorYearExcessCapacity = vintages.map((v) => ({
+      yearsAgo: num(v.yearsAgo),
+      excessCapacity: num(v.excessCapacity),
+      previouslyTransferred: num(v.previouslyTransferred),
+      previouslyAbsorbed: num(v.previouslyAbsorbed),
+    }));
+
+  // Parts 1B-1E, 2B, 2C, 2E and 2M — the tables the IFE/IFR build-up reads.
+  // Each keeps only rows that carry a real figure, so a blank row left behind
+  // by the array editor contributes nothing.
+  const exemptIfe = (e.exemptIfe ?? []).filter(
+    (r) => r?.ifeIncurred != null || r?.incomeFromFundedActivities != null || r?.lossFromFundedActivities != null,
+  );
+  if (exemptIfe.length > 0)
+    facts.exemptIfe = exemptIfe.map((r) => ({
+      ...(r.authorityName ? { authorityName: r.authorityName } : {}),
+      principalAmount: num(r.principalAmount),
+      ifeIncurred: num(r.ifeIncurred),
+      incomeFromFundedActivities: num(r.incomeFromFundedActivities),
+      lossFromFundedActivities: num(r.lossFromFundedActivities),
+    }));
+
+  const borrowings = (e.borrowings ?? []).filter(
+    (r) => r?.interestPaidOrPayable != null || r?.fundingCostAmounts != null || r?.costReducingAmounts != null,
+  );
+  if (borrowings.length > 0)
+    facts.borrowings = borrowings.map((r) => ({
+      ...(r.relationship ? { relationship: r.relationship } : {}),
+      principalAmount: num(r.principalAmount),
+      derivativeNotional: num(r.derivativeNotional),
+      interestPaidOrPayable: num(r.interestPaidOrPayable),
+      fundingCostAmounts: num(r.fundingCostAmounts),
+      costReducingAmounts: num(r.costReducingAmounts),
+    }));
+
+  const loans = (e.loans ?? []).filter(
+    (r) => r?.returnAmounts != null || r?.returnReducingAmounts != null,
+  );
+  if (loans.length > 0)
+    facts.loans = loans.map((r) => ({
+      ...(r.relationship ? { relationship: r.relationship } : {}),
+      principalAmount: num(r.principalAmount),
+      derivativeNotional: num(r.derivativeNotional),
+      returnAmounts: num(r.returnAmounts),
+      returnReducingAmounts: num(r.returnReducingAmounts),
+    }));
+
+  const partnershipIfe = (e.partnershipIfe ?? []).filter((r) => r?.shareOfPartnershipIfe != null);
+  if (partnershipIfe.length > 0)
+    facts.partnershipIfe = partnershipIfe.map((r) => ({
+      ...(r.partnershipName ? { partnershipName: r.partnershipName } : {}),
+      ...(r.accountNumber ? { accountNumber: r.accountNumber } : {}),
+      shareOfPartnershipIfe: num(r.shareOfPartnershipIfe),
+      portionUnderParagraph12_1_l1: num(r.portionUnderParagraph12_1_l1),
+      portionDeniedBySubsection96_2_1: num(r.portionDeniedBySubsection96_2_1),
+    }));
+
+  const capitalizedIfe = (e.capitalizedIfe ?? []).filter(
+    (r) => r?.ifeInOpeningUcc != null || r?.ifeInCca != null || r?.ifeInTerminalLoss != null,
+  );
+  if (capitalizedIfe.length > 0)
+    facts.capitalizedIfe = capitalizedIfe.map((r) => ({
+      ...(r.ccaClass ? { ccaClass: String(r.ccaClass) } : {}),
+      ifeInOpeningUcc: num(r.ifeInOpeningUcc),
+      ifeInAcquisitionsAndDispositions: num(r.ifeInAcquisitionsAndDispositions),
+      ifeInTerminalLoss: num(r.ifeInTerminalLoss),
+      ifeInCca: num(r.ifeInCca),
+    }));
+
+  const resourceIfe = (e.resourceIfe ?? []).filter((r) => r?.pool != null);
+  if (resourceIfe.length > 0)
+    facts.resourceIfe = resourceIfe.map((r) => ({
+      pool: r.pool,
+      ifeInOpeningBalance: num(r.ifeInOpeningBalance),
+      ifeAddedOrDeducted: num(r.ifeAddedOrDeducted),
+      ifeInCurrentYearClaim: num(r.ifeInCurrentYearClaim),
+    }));
+
+  const lossPortion = (e.lossPortionFromIfe ?? []).filter((r) => r?.nonCapitalLoss != null);
+  if (lossPortion.length > 0)
+    facts.lossPortionFromIfe = lossPortion.map((r) => ({
+      ...(r.taxYearOfOrigin ? { taxYearOfOrigin: r.taxYearOfOrigin } : {}),
+      nonCapitalLoss: num(r.nonCapitalLoss),
+      variableJSecondAmount: num(r.variableJSecondAmount),
+      amountDeducted: num(r.amountDeducted),
+    }));
+
+  const clause95Denied = (e.clause95Denied ?? []).filter((r) => r?.variableAForAffiliate != null);
+  if (clause95Denied.length > 0)
+    facts.clause95Denied = clause95Denied.map((r) => ({
+      ...(r.affiliateName ? { affiliateName: r.affiliateName } : {}),
+      variableAForAffiliate: num(r.variableAForAffiliate),
+      specifiedParticipatingPercentage: num(r.specifiedParticipatingPercentage),
+    }));
+
+  const clause95Included = (e.clause95Included ?? []).filter((r) => r?.amountInAffiliateFapi != null);
+  if (clause95Included.length > 0)
+    facts.clause95Included = clause95Included.map((r) => ({
+      ...(r.affiliateName ? { affiliateName: r.affiliateName } : {}),
+      amountInAffiliateFapi: num(r.amountInAffiliateFapi),
+      specifiedParticipatingPercentage: num(r.specifiedParticipatingPercentage),
+    }));
+
+  if (e.ifeDetail && Object.values(e.ifeDetail).some((v) => v != null)) facts.ifeDetail = e.ifeDetail;
+  if (e.ifrDetail && Object.values(e.ifrDetail).some((v) => v != null)) facts.ifrDetail = e.ifrDetail;
+
   return Object.keys(facts).length > 0 ? { eifel: facts } : {};
 }
 

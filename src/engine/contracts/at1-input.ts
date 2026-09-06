@@ -199,6 +199,31 @@ export const LimitedPartnershipLossRow = z
   .meta({ id: 'LimitedPartnershipLossRow' });
 
 /**
+ * AT1 Schedule 21, page 5 — Continuity of Restricted Interest and Financing
+ * Expenses (RIFE), lines 200-250/310-350. Not part of the NetFile schema
+ * itself (see `computeRifeContinuity`'s own doc comment in `@classytic/ca-tax`),
+ * but line 240's final figure feeds AT1 Schedule 12 line 130, a real filed
+ * line — so this is collected even though the schedule's own detail isn't
+ * transmitted. `excessCapacity`/`receivedCapacity`/`currentYearRife` are
+ * plain entries until the federal EIFEL limitation engine computes T2
+ * Schedule 130 lines 129/130 and Schedule 4 line 710 for itself.
+ */
+export const RifeContinuityValues = z
+  .object({
+    openingBalance: z.number().optional().describe('200 — RIFE at the end of the previous tax year.'),
+    transferredOnWindUp: z.number().optional().describe('210 — transferred on an amalgamation or wind-up.'),
+    acquisitionOfControlAdjustment: z.number().optional().describe('220 — deduct: adjustment for an acquisition of control.'),
+    currentYearRife: z.number().optional().describe('230 — current-year RIFE under ITA s.111(8) (T2 Schedule 4 line 710).'),
+    excessCapacity: z.number().optional().describe("320 — corporation's excess capacity for the year (T2 Schedule 130 line 129)."),
+    receivedCapacity: z.number().optional().describe('330 — total received capacity for the year (T2 Schedule 130 line 130).'),
+    deductedClaim: z
+      .number()
+      .optional()
+      .describe('240 — RIFE deducted for the tax year. Must not exceed line 350; blank = claim the maximum available.'),
+  })
+  .meta({ id: 'RifeContinuityValues' });
+
+/**
  * AT1 Schedule 21 — Alberta's own loss-pool CONTINUITY. Unlike the pools
  * Schedule 12 reconciles against federal figures, the OPENING balance here
  * can never be derived: it is Alberta's own carried-forward balance from a
@@ -254,6 +279,9 @@ export const AlbertaContinuityValues = z
       .array(LimitedPartnershipLossRow)
       .optional()
       .describe('The sixth section of the live form — one row per partnership, not per jurisdiction.'),
+    rife: RifeContinuityValues.optional().describe(
+      'The NINTH section (page 5) — Continuity of Restricted Interest and Financing Expenses.',
+    ),
     nonCapitalVintages: z
       .array(NonCapitalLossVintageRow)
       .optional()
@@ -1079,6 +1107,7 @@ export type AlbertaDonationsValues = z.infer<typeof AlbertaDonationsValues>;
 export type NonCapitalLossVintageRow = z.infer<typeof NonCapitalLossVintageRow>;
 export type OtherLossVintageRow = z.infer<typeof OtherLossVintageRow>;
 export type LimitedPartnershipLossRow = z.infer<typeof LimitedPartnershipLossRow>;
+export type RifeContinuityValues = z.infer<typeof RifeContinuityValues>;
 export type AlbertaContinuityValues = z.infer<typeof AlbertaContinuityValues>;
 export type IegGroupMember = z.infer<typeof IegGroupMember>;
 export type IegAgreementMember = z.infer<typeof IegAgreementMember>;

@@ -264,11 +264,236 @@ export const PreferredSharesValues = z
   .meta({ id: 'PreferredSharesValues' });
 
 /** EIFEL — excluded-entity facts (s.18.2). Most CCPCs clear this automatically. */
+/** Schedule 130 Parts 1C/1D column 1 — who the other party to the financing is. */
+export const EifelCounterpartyRelationship = z.enum([
+  'canadian-arm-length',
+  'canadian-non-arm-length',
+  'non-resident-arm-length',
+  'non-resident-non-arm-length',
+]);
+
+/** Schedule 130 Part 2C — the ten resource pools the form lists, in its own row order. */
+export const ResourceIfePool = z.enum([
+  'ccee-regular',
+  'ccee-successor',
+  'ccde-regular',
+  'ccde-successor',
+  'ccogpe-regular',
+  'ccogpe-successor',
+  'fede-regular',
+  'fede-successor',
+  'cfre-regular',
+  'cfre-successor',
+]);
+
 export const EifelValues = z
   .object({
     netInterestAndFinancingExpenses: z.number().optional(),
     groupTaxableCapital: z.number().optional(),
     domesticExceptionApplies: z.boolean().optional(),
+    // ── Schedule 130 — the computation itself, once the regime applies ──────
+    interestAndFinancingExpenses: z
+      .number()
+      .optional()
+      .describe(
+        'Schedule 130 Part 2A line 045 — the corporation’s GROSS interest and financing expenses. Distinct from the group NET figure above, which only settles the de-minimis excluded-entity test.',
+      ),
+    interestAndFinancingRevenues: z
+      .number()
+      .optional()
+      .describe('Schedule 130 Part 2D line 072 — interest and financing revenues.'),
+    adjustedTaxableIncome: z
+      .number()
+      .optional()
+      .describe(
+        'Schedule 130 Part 2F line 106 — supply only to override the engine’s own derivation, which builds it from taxable income plus IFE, CCA, resource deductions, terminal loss and the 110(1)(k) deduction.',
+      ),
+    hasGroupRatioElection: z
+      .boolean()
+      .optional()
+      .describe('Whether a group ratio election under subsection 18.21(2) was made.'),
+    groupRatioAmount: z
+      .number()
+      .optional()
+      .describe('Schedule 130 line 118/132 — the allocated group ratio amount.'),
+    rifeFromPreviousYears: z
+      .number()
+      .optional()
+      .describe('Schedule 130 Part 2J line 128 — RIFE carried forward from previous tax years.'),
+    receivedCapacity: z
+      .array(
+        z.object({
+          entityName: z.string().optional(),
+          accountNumber: z.string().optional(),
+          taxYearEnd: z.string().optional(),
+          amount: z.number().optional(),
+        }),
+      )
+      .optional()
+      .describe('Schedule 130 Part 1A — capacity received from eligible group entities (line 130).'),
+    priorYearExcessCapacity: z
+      .array(
+        z.object({
+          yearsAgo: z.number().optional().describe('1, 2 or 3 — the form carries three years only.'),
+          excessCapacity: z.number().optional().describe('122'),
+          previouslyTransferred: z.number().optional().describe('123 — under subsection 18.2(4)'),
+          previouslyAbsorbed: z.number().optional().describe('124 — under subsection 18.2(2)'),
+        }),
+      )
+      .optional()
+      .describe('Schedule 130 Part 2I — the three preceding years’ excess-capacity vintages.'),
+    partnershipIfeAddBack: z
+      .number()
+      .optional()
+      .describe(
+        'Schedule 130 Part 2N line 158 — partnership IFE add-back (Schedule 1 line 252). Derived from `partnershipIfe` below × the denied proportion; supply only to override.',
+      ),
+
+    // ── Parts 1B-1E, 2B, 2C, 2E, 2M — the tables IFE and IFR are built from ──
+    exemptIfe: z
+      .array(
+        z.object({
+          authorityName: z.string().optional().describe('007'),
+          principalAmount: z.number().optional().describe('008'),
+          ifeIncurred: z.number().optional().describe('009'),
+          incomeFromFundedActivities: z.number().optional().describe('010 — reduces ATI (line 104)'),
+          lossFromFundedActivities: z.number().optional().describe('011 — adds to ATI (line 092)'),
+        }),
+      )
+      .optional()
+      .describe('Part 1B — public-sector agreements whose borrowings produce exempt IFE.'),
+    borrowings: z
+      .array(
+        z.object({
+          relationship: EifelCounterpartyRelationship.optional(),
+          principalAmount: z.number().optional().describe('012'),
+          derivativeNotional: z.number().optional().describe('013'),
+          interestPaidOrPayable: z.number().optional().describe('014 → line 027'),
+          fundingCostAmounts: z.number().optional().describe('015 → line 033'),
+          costReducingAmounts: z.number().optional().describe('016 → line 042'),
+        }),
+      )
+      .optional()
+      .describe('Part 1C — borrowings and other financings.'),
+    loans: z
+      .array(
+        z.object({
+          relationship: EifelCounterpartyRelationship.optional(),
+          principalAmount: z.number().optional().describe('017'),
+          derivativeNotional: z.number().optional().describe('018'),
+          returnAmounts: z.number().optional().describe('019 → line 061'),
+          returnReducingAmounts: z.number().optional().describe('020 → line 066'),
+        }),
+      )
+      .optional()
+      .describe('Part 1D — loans and other financings.'),
+    partnershipIfe: z
+      .array(
+        z.object({
+          partnershipName: z.string().optional().describe('021'),
+          accountNumber: z.string().optional().describe('022'),
+          shareOfPartnershipIfe: z.number().optional().describe('023'),
+          portionUnderParagraph12_1_l1: z.number().optional().describe('024'),
+          portionDeniedBySubsection96_2_1: z.number().optional().describe('025'),
+        }),
+      )
+      .optional()
+      .describe('Part 1E — IFE allocated from a partnership. Feeds lines 039, 142 and 156.'),
+    capitalizedIfe: z
+      .array(
+        z.object({
+          ccaClass: z.string().optional().describe('046'),
+          ifeInOpeningUcc: z.number().optional().describe('047'),
+          ifeInAcquisitionsAndDispositions: z.number().optional().describe('048 — signed'),
+          ifeInTerminalLoss: z.number().optional().describe('050 → line 032'),
+          ifeInCca: z.number().optional().describe('051 → line 030'),
+        }),
+      )
+      .optional()
+      .describe('Part 2B — IFE capitalized into the cost of depreciable property.'),
+    resourceIfe: z
+      .array(
+        z.object({
+          pool: ResourceIfePool,
+          ifeInOpeningBalance: z.number().optional().describe('053'),
+          ifeAddedOrDeducted: z.number().optional().describe('054 — signed'),
+          ifeInCurrentYearClaim: z.number().optional().describe('056 → line 031'),
+        }),
+      )
+      .optional()
+      .describe('Part 2C — IFE sitting inside resource expense pools.'),
+    lossPortionFromIfe: z
+      .array(
+        z.object({
+          taxYearOfOrigin: z.string().optional().describe('073'),
+          nonCapitalLoss: z.number().optional().describe('074 — variable J(i)'),
+          variableJSecondAmount: z.number().optional().describe('075 — variable J(ii)'),
+          amountDeducted: z.number().optional().describe('077'),
+        }),
+      )
+      .optional()
+      .describe('Part 2E — the IFE-derived portion of a 111(1)(a) loss claim (line 089).'),
+    clause95Denied: z
+      .array(
+        z.object({
+          affiliateName: z.string().optional().describe('144'),
+          variableAForAffiliate: z.number().optional().describe('145'),
+          specifiedParticipatingPercentage: z
+            .number()
+            .optional()
+            .describe('148 — as a FRACTION (0.4, not 40)'),
+        }),
+      )
+      .optional()
+      .describe('Part 2M, first table — subclause 95(2)(f.11)(ii)(D)(I).'),
+    clause95Included: z
+      .array(
+        z.object({
+          affiliateName: z.string().optional().describe('151'),
+          amountInAffiliateFapi: z.number().optional().describe('152'),
+          specifiedParticipatingPercentage: z
+            .number()
+            .optional()
+            .describe('153 — as a FRACTION'),
+        }),
+      )
+      .optional()
+      .describe('Part 2M, second table — subclause 95(2)(f.11)(ii)(D)(II).'),
+    ifeDetail: z
+      .object({
+        otherInterest: z.number().optional().describe('028'),
+        subsection20_1_eAmounts: z.number().optional().describe('029'),
+        fundingCostLoss: z.number().optional().describe('034'),
+        fundingCostCapitalLoss: z.number().optional().describe('035'),
+        feeGivingRiseToIfe: z.number().optional().describe('036'),
+        feeReducingIfe: z.number().optional().describe('037'),
+        leaseFinancingAmount: z.number().optional().describe('038'),
+        reinstatedPartnershipLoss: z.number().optional().describe('040'),
+        affiliateRaife: z.number().optional().describe('041 — also line 143'),
+        costReducingGain: z.number().optional().describe('043'),
+        costReducingPartnershipShare: z.number().optional().describe('044'),
+      })
+      .optional()
+      .describe(
+        'Part 2A — the IFE lines NOT fed by the tables above. Lines 027/030/031/032/033/039/042 come from Parts 1C, 1E, 2B and 2C and must not be repeated here.',
+      ),
+    ifrDetail: z
+      .object({
+        interestReceived: z.number().optional().describe('058'),
+        subsection12_9Amounts: z.number().optional().describe('059'),
+        guaranteeFees: z.number().optional().describe('060'),
+        returnGain: z.number().optional().describe('062'),
+        leaseFinancingAmount: z.number().optional().describe('063'),
+        partnershipShare: z.number().optional().describe('064'),
+        affiliateRaifr: z.number().optional().describe('065'),
+        returnReducingLoss: z.number().optional().describe('067'),
+        returnReducingCapitalLoss: z.number().optional().describe('068'),
+        returnReducingPartnershipShare: z.number().optional().describe('069'),
+        shelteredByForeignTaxRelief: z.number().optional().describe('070'),
+        exemptFromPartITax: z.number().optional().describe('071'),
+      })
+      .optional()
+      .describe('Part 2D — the IFR lines not fed by Part 1D (lines 061 and 066).'),
   })
   .meta({ id: 'EifelValues' });
 

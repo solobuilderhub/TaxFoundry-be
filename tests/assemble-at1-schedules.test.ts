@@ -869,6 +869,109 @@ describe('Schedule 21 — limited partnership loss continuity (lines 131-141)', 
   });
 });
 
+describe('Schedule 21 — RIFE continuity feeds Schedule 12 lines 130/131 (not its own wire fields)', () => {
+  it('files 012130 from the RIFE deducted figure, with federal (012131) at 0', () => {
+    const riWithRife = {
+      ...riWithDivergence,
+      albertaContinuity: {
+        ...riWithDivergence.albertaContinuity,
+        rife: {
+          openingBalance: 100_000,
+          excessCapacity: 10_000,
+          receivedCapacity: 15_000,
+        },
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithRife, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch12 = out.schedulePayloads?.find((s) => s.scheduleId === '012');
+    const byId = new Map((sch12?.values ?? []).map((v) => [v.lineItemId, v.value]));
+    // 310 = 100,000; 340 = 25,000; 350 = lesser = 25,000; no override ⇒ deducted = 25,000.
+    expect(byId.get('012130001')).toBe(25_000);
+    expect(byId.get('012131001')).toBe(0);
+    // Schedule 21 itself never carries a 021200-250/310-350 line — confirmed
+    // absent from the NetFile schema (schedule21-rife.ts's own doc comment).
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const ids21 = (sch21?.values ?? []).map((v) => v.lineItemId);
+    expect(ids21.some((id) => id.startsWith('021200') || id.startsWith('021250'))).toBe(false);
+  });
+
+  describe('lines 230/320/330 default from federal Schedule 130 rather than asking twice', () => {
+    // The AT1 form names each of these by its federal source: 230 is "T2
+    // Schedule 4 line 710", 320 is "T2 Schedule 130 line 129", 330 is "line
+    // 130". A corporation in the EIFEL regime enters none of them.
+    const inRegime = {
+      ...fed,
+      bookNetIncome: 5_000_000,
+      activeBusinessIncome: 5_000_000,
+      taxableCapital: 90_000_000,
+      eifel: {
+        netInterestAndFinancingExpenses: 1_500_000,
+        interestAndFinancingExpenses: 1_500_000,
+        receivedCapacity: [{ entityName: 'Parent Co', amount: 300_000 }],
+        rifeFromPreviousYears: 200_000,
+      },
+    };
+
+    it('carries the federal figures into the Alberta RIFE continuity', () => {
+      const engineInput = assembleProvincialInput('AT1', inRegime, riWithDivergence, {
+        isCcpc: false,
+      }) as { schedules?: { losses?: { rife?: Record<string, number> } } };
+      const rife = engineInput.schedules?.losses?.rife;
+      expect(rife).toBeDefined();
+      // 330 ← Part 1A total; 320 ← Part 2G amount F; both straight from federal
+      // with nothing entered on the Alberta side.
+      expect(rife?.receivedCapacity).toBe(300_000);
+      expect(rife?.excessCapacity).toBeGreaterThan(0);
+      // 230 ← Schedule 4 line 710. This fact pattern is sheltered (the 30%
+      // ceiling exceeds the IFE), so nothing was restricted this year.
+      expect(rife?.currentYearRife).toBe(0);
+    });
+
+    it('keeps the Alberta OPENING balance Alberta’s own, so the two sides can diverge', () => {
+      const engineInput = assembleProvincialInput('AT1', inRegime, riWithDivergence, {
+        isCcpc: false,
+      });
+      const out = runAT1Compute(engineInput);
+      const sch12 = out.schedulePayloads?.find((s) => s.scheduleId === '012');
+      const byId = new Map((sch12?.values ?? []).map((v) => [v.lineItemId, v.value]));
+      // Federal claimed its whole 200,000 carried-forward pool (line 128);
+      // Alberta's own opening balance (line 200) was never entered and does not
+      // default from federal — it is a prior AT1 filing's figure — so Alberta
+      // claims nil. That divergence is exactly what this pair discloses.
+      expect(byId.get('012131001')).toBe(200_000);
+      expect(byId.get('012130001')).toBe(0);
+    });
+
+    it('lets an Alberta entry override the federal default', () => {
+      const withOverride = {
+        ...riWithDivergence,
+        albertaContinuity: {
+          ...riWithDivergence.albertaContinuity,
+          rife: { openingBalance: 500_000, excessCapacity: 75_000 },
+        },
+      };
+      const engineInput = assembleProvincialInput('AT1', inRegime, withOverride, {
+        isCcpc: false,
+      }) as { schedules?: { losses?: { rife?: Record<string, number> } } };
+      const rife = engineInput.schedules?.losses?.rife;
+      expect(rife?.excessCapacity).toBe(75_000); // the entry, not federal's figure
+      expect(rife?.receivedCapacity).toBe(300_000); // still federal's — not overridden
+      // 310 = 500,000 opening; 340 = 75,000 + 300,000; 350 = lesser = 375,000.
+      expect(rife?.deducted).toBe(375_000);
+    });
+  });
+
+  it('omits 012130/131 entirely when no RIFE data was entered', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch12 = out.schedulePayloads?.find((s) => s.scheduleId === '012');
+    const ids = (sch12?.values ?? []).map((v) => v.lineItemId);
+    expect(ids).not.toContain('012130001');
+    expect(ids).not.toContain('012131001');
+  });
+});
+
 describe('Schedule 21 — losses by year of origin (row 0 derived, priors are AT1-only input)', () => {
   it('derives row 0 from the SAME figures already computed for the pool and the top-level loss', () => {
     const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });

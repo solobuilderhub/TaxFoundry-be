@@ -139,3 +139,49 @@ describe('assembleT2Input — Schedule 8, a NEW class 13/14 addition', () => {
     expect(out.class14).toBeUndefined();
   });
 });
+
+describe('assembleT2Input — Schedule 130 (EIFEL) tables reach the engine', () => {
+  it('carries the borrowing, partnership, capitalized and resource tables through', () => {
+    const out = assembleT2Input(
+      {
+        eifel: {
+          netInterestAndFinancingExpenses: 4_000_000,
+          borrowings: [
+            { relationship: 'canadian-arm-length', interestPaidOrPayable: 3_000_000, costReducingAmounts: 200_000 },
+          ],
+          loans: [{ returnAmounts: 250_000 }],
+          partnershipIfe: [{ partnershipName: 'Riverside LP', shareOfPartnershipIfe: 1_000_000 }],
+          capitalizedIfe: [{ ccaClass: '1', ifeInOpeningUcc: 500_000, ifeInCca: 400_000 }],
+          resourceIfe: [{ pool: 'ccee-regular', ifeInOpeningBalance: 300_000, ifeInCurrentYearClaim: 300_000 }],
+        },
+      },
+      engagement,
+    );
+    const e = out.eifel as Record<string, unknown[]>;
+    expect(e.borrowings).toHaveLength(1);
+    expect(e.loans).toHaveLength(1);
+    expect(e.partnershipIfe).toHaveLength(1);
+    expect(e.capitalizedIfe).toHaveLength(1);
+    expect(e.resourceIfe).toHaveLength(1);
+  });
+
+  it('drops blank rows the array editor left behind', () => {
+    const out = assembleT2Input(
+      {
+        eifel: {
+          netInterestAndFinancingExpenses: 4_000_000,
+          borrowings: [{ interestPaidOrPayable: 100_000 }, { relationship: 'canadian-arm-length' }],
+          partnershipIfe: [{ partnershipName: '' }],
+        },
+      },
+      engagement,
+    );
+    const e = out.eifel as Record<string, unknown[]>;
+    expect(e.borrowings).toHaveLength(1); // the row with no figure contributed nothing
+    expect(e.partnershipIfe).toBeUndefined();
+  });
+
+  it('omits the eifel block entirely when nothing was entered', () => {
+    expect(assembleT2Input({}, engagement).eifel).toBeUndefined();
+  });
+});

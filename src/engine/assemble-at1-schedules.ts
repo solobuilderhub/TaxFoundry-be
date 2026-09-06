@@ -50,11 +50,13 @@ import {
   computeLossContinuity,
   computeNonCapitalLossByYearOfOrigin,
   computeOtherLossByYearOfOrigin,
+  computeRifeContinuity,
   computeSchedule20,
   type FederalT2Result,
   type IegAgreementInput,
   type LimitedPartnershipLossesResult,
   reconcileAlbertaNetIncome,
+  type RifeContinuityResult,
   type Schedule12FilingInput,
   type Schedule12Result,
   schedule12LossDeductions,
@@ -605,6 +607,45 @@ function scheduleTwentyOne(
           ),
         }
       : {}),
+    // The NINTH section (page 5) — RIFE. Not part of the NetFile schema (see
+    // `computeRifeContinuity`'s own doc comment) — kept here so Schedule 12's
+    // reconciliation below can read `.deducted` for its own line 130.
+    //
+    // Three of its lines are the SAME figures federal Schedule 130 computes,
+    // and the AT1 form names each of them by its federal source: line 230 is
+    // "T2 Schedule 4 line 710", 320 is "T2 Schedule 130 line 129" and 330 is
+    // "line 130". So each defaults to federal's own figure and is overridden
+    // only where Alberta genuinely diverges — the same "blank = same as
+    // federal" rule the four loss pools above already follow.
+    // Gated on real RIFE, not on the federal block merely existing. Excess
+    // capacity on its own is not RIFE — every profitable corporation with
+    // little interest expense has plenty of it, and Schedule 12 lines 130/131
+    // disclose the restricted expenses themselves, not the headroom. So the
+    // block is filed when the preparer entered something, or when federal
+    // actually restricted (`rifeForYear`) or deducted (`rifeDeductible`) some.
+    ...(c.rife ||
+    (federal.eifelCapacity?.rifeForYear ?? 0) > 0 ||
+    (federal.eifelCapacity?.rifeDeductible ?? 0) > 0
+      ? {
+          rife: computeRifeContinuity({
+            openingBalance: num(c.rife?.openingBalance),
+            transferredOnWindUp: num(c.rife?.transferredOnWindUp),
+            acquisitionOfControlAdjustment: num(c.rife?.acquisitionOfControlAdjustment),
+            currentYearRife: present(c.rife?.currentYearRife)
+              ? num(c.rife?.currentYearRife)
+              : (federal.eifelCapacity?.rifeForYear ?? 0),
+            excessCapacity: present(c.rife?.excessCapacity)
+              ? num(c.rife?.excessCapacity)
+              : (federal.eifelCapacity?.excessCapacityBeforeRife ?? 0),
+            receivedCapacity: present(c.rife?.receivedCapacity)
+              ? num(c.rife?.receivedCapacity)
+              : (federal.eifelCapacity?.receivedCapacity ?? 0),
+            ...(present(c.rife?.deductedClaim)
+              ? { deductedClaim: num(c.rife?.deductedClaim) }
+              : {}),
+          }),
+        }
+      : {}),
   };
 }
 
@@ -798,6 +839,12 @@ function scheduleTwelve(
   restrictedFarmContinuity: ReturnType<typeof computeLossContinuity> | undefined,
   farmContinuity: ReturnType<typeof computeLossContinuity> | undefined,
   limitedPartnershipLosses: LimitedPartnershipLossesResult | undefined,
+  // AT1SCH12 lines 130/131 ("Restricted interest and financing expenses") —
+  // Alberta = Schedule 21 line 240 when Schedule 21 exists; federal has no
+  // equivalent computed by this engine yet (the EIFEL limitation module
+  // does not compute the s.111(1)(a.1) deduction — see its own doc comment),
+  // so federal stays 0, same as `allowableBusinessInvestmentLoss` above.
+  rife: RifeContinuityResult | undefined,
   // Area B, lines 056-059 — undefined on the first (pre-donations) call.
   donations: ReturnType<typeof scheduleTwenty> | undefined,
   culturalEcologicalGiftsFederal: number,
@@ -935,6 +982,20 @@ function scheduleTwelve(
         }
       : {}),
     lossDeductions,
+    // 012130/131 — same "omit when this composer has no data at all" shape
+    // as donations below. The federal side is T2 jacket line 336
+    // ("Restricted interest and financing expenses from Schedule 4"), which
+    // is Schedule 130 Part 2J amount B — the amount deductible under
+    // paragraph 111(1)(a.1). The engine computes it whenever the EIFEL regime
+    // applies; a return outside the regime genuinely has none.
+    ...(rife
+      ? {
+          restrictedInterestAndFinancing: {
+            alberta: rife.deducted,
+            federal: federal.eifelCapacity?.rifeDeductible ?? 0,
+          },
+        }
+      : {}),
     // Area B, 056-059 — same "always both sides once the pool exists" shape
     // as lossDeductions above. `donations.charitable`/`.gifts` are each only
     // present when Schedule 20 actually computed that pool (real activity),
@@ -1168,6 +1229,7 @@ export function assembleAt1Schedules(
     undefined,
     undefined,
     undefined,
+    undefined,
     0,
     resourceDeductions,
   );
@@ -1196,6 +1258,7 @@ export function assembleAt1Schedules(
     losses?.restrictedFarm,
     losses?.farm,
     losses?.limitedPartnershipLosses,
+    losses?.rife,
     donations,
     fed.culturalEcologicalGifts ?? 0,
     resourceDeductions,
