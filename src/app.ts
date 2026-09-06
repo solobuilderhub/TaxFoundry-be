@@ -20,9 +20,10 @@ import { registerPlugins } from '#plugins/index.js';
 // resourcePrefix below; no manual registration loop needed.
 import { resources } from '#resources/index.js';
 import { getAuth } from './auth.js';
-import { registerMcpEndpoint } from './mcp/index.js';
+import { registerRateYears } from './config/rate-years.js';
 import { setAt1FilingGateway } from './filing/at1-gateway.js';
 import { at1SoapClientFromEnv } from './filing/at1-soap-client.js';
+import { registerMcpEndpoint } from './mcp/index.js';
 
 /**
  * Create a fully configured app instance
@@ -85,6 +86,10 @@ export async function createAppInstance(): Promise<FastifyInstance> {
   } catch (err) {
     app.log.error({ err }, 'MCP endpoint failed to mount — /api/mcp unavailable');
   }
+
+  // The tax years this deploy certifies rates for — the package ships 2024
+  // only, and a year with no exact entry is red-flagged and cannot be filed.
+  registerRateYears();
 
   // Alberta Net File transmission. Installed ONLY when an endpoint is
   // configured — absent it, the gateway keeps its 503 stub, so a dev or test

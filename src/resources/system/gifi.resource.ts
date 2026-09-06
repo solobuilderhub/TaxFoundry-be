@@ -6,11 +6,17 @@
  * The GIFI classification is delegated to `@classytic/ledger-ca` (see
  * engine/gifi-import.ts). Read-only and org-agnostic — any org member may use it.
  *
- *   POST /api/gifi/import { text? | lines? } → GifiImportResult
+ *   POST /api/gifi/import     { text? | lines? } → GifiImportResult
+ *   POST /api/gifi/import-cor { content }        → CorImportResult
+ *
+ * The second reads a CRA .cor file (what every certified T2 package exports)
+ * through `@classytic/ledger-ca/cor`'s parser, then classifies its GIFI
+ * accounts by the same path as the first — see engine/cor-import.ts.
  */
 import { defineResource } from '@classytic/arc';
 import { createError } from '@classytic/repo-core/errors';
 import { requireOrgStaff } from '#shared/permissions.js';
+import { importCorFile } from '../../engine/cor-import.js';
 import { type GifiLine, importGifiTrialBalance, parseGifiText } from '../../engine/gifi-import.js';
 
 const gifiResource = defineResource({
@@ -44,6 +50,28 @@ const gifiResource = defineResource({
         }
         if (lines.length === 0) throw createError(422, 'No GIFI lines found to import');
         return { data: importGifiTrialBalance(lines) };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/import-cor',
+      operation: 'corImport',
+      summary: 'Load a filed T2 return’s GIFI statements and identification from a CRA .cor file',
+      permissions: requireOrgStaff(),
+      mcp: { annotations: { readOnlyHint: true } },
+      handler: async (req: { body?: unknown }) => {
+        const body = (req.body ?? {}) as { content?: unknown };
+        if (typeof body.content !== 'string' || body.content.trim() === '') {
+          throw createError(400, 'Provide `content` — the text of the .cor file');
+        }
+        const result = importCorFile(body.content);
+        if (result.gifiAccountsInFile === 0) {
+          throw createError(
+            422,
+            `No GIFI account lines found in the file${result.parsingErrors.length ? ` — ${result.parsingErrors[0]}` : ''}`,
+          );
+        }
+        return { data: result };
       },
     },
   ],

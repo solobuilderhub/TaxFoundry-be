@@ -29,8 +29,9 @@
  * `federal<Name>` half. `claimed` is the one discretionary claim figure per
  * block, named to match the engine's own `Input.claimed` 1:1.
  *
- * Not wired into `assemble-at1-schedules.ts` here — that integration is done
- * centrally once every concurrently-developed composer exists.
+ * Wired: `assemble-at1-schedules.ts` calls `assembleSchedule15` and threads
+ * the result into both Schedule 12's resource-deduction pairs and the filed
+ * `schedules.resourceDeductions`; the engine's `schedule15Values` then emits it.
  *
  * Kept in its own file/directory (`at1-schedule-composers/`) per the existing
  * `assemble-at1-schedules.ts` convention of small, single-purpose, named
