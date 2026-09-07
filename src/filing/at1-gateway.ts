@@ -59,3 +59,16 @@ export function setAt1FilingGateway(g: At1FilingGateway): void {
 export function getAt1FilingGateway(): At1FilingGateway {
   return gateway;
 }
+
+/**
+ * Whether THIS deployment can actually transmit to TRA.
+ *
+ * The export screen told every preparer that "live Alberta TRA e-file isn't
+ * enabled yet" while the same build transmitted to TRA's certification endpoint
+ * and came back with a real refusal code. Copy that contradicts what the button
+ * does is worse than no copy: it teaches people to disbelieve the screen. The
+ * interface can now ask instead of asserting.
+ */
+export function isAt1FilingGatewayConfigured(): boolean {
+  return !(gateway instanceof NotConfiguredGateway);
+}

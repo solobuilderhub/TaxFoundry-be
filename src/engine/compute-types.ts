@@ -19,7 +19,10 @@ export interface EngineComputeOutput {
     payload: Record<string, unknown>;
   };
   engineVersion: string;
-  /** Reproducibility record (T2). Optional — AT1 does not emit one yet. */
+  /**
+   * Reproducibility record. T2 and AT1 both emit one; CO-17 does not yet, so it
+   * stays optional.
+   */
   snapshot?: ComputationSnapshot;
   /**
    * Supporting-schedule line items for the filing payload, as the engine

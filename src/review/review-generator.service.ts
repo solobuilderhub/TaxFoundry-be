@@ -48,7 +48,23 @@ interface ReviewInput {
   rateYearCertified?: boolean;
   /** The return's tax year (for the rate-year flag message). */
   taxYear?: number;
+  /**
+   * Province of permanent establishment, from the client's registered address.
+   *
+   * The return input has no province field — there is no such control in the
+   * return editor — so reading `ri.identification.province` alone left the
+   * Schedule 5 flag printing "Provincial/territorial tax (undefined)".
+   */
+  province?: string;
 }
+
+/** The client's registered-address province, blank-safe. */
+export const clientProvince = (
+  client: { address?: { province?: string } | null; jurisdiction?: string } | null | undefined,
+): string | undefined => {
+  const v = client?.address?.province ?? client?.jurisdiction;
+  return v && String(v).trim() !== '' ? String(v).trim() : undefined;
+};
 
 /** The rule set. Pure — takes the return data, returns the flags. Unit-testable. */
 export function evaluateReviewFlags(input: ReviewInput): Flag[] {
@@ -275,7 +291,8 @@ export function evaluateReviewFlags(input: ReviewInput): Flag[] {
   }
 
   // ── Provincial/territorial tax (Schedule 5) ───────────────────────────────
-  const province = (ri.identification as { province?: string } | undefined)?.province;
+  const province =
+    (ri.identification as { province?: string } | undefined)?.province ?? input.province;
   // Multi-jurisdiction: PEs allocated across provinces (Reg 402). Each per-province
   // line is `provincialTax:<CODE>`; AB/QC among them must file their own return.
   const provinceLines = Object.keys(fold).filter((k) => k.startsWith('provincialTax:'));
@@ -535,6 +552,7 @@ export async function runReview(params: {
       businessNumber: client?.businessNumber ?? undefined,
       fold,
       ri,
+      province: clientProvince(client),
       ...(rateYearCertified !== undefined ? { rateYearCertified, taxYear } : {}),
     }),
     // Line-level completeness / consistency diagnostics (data-driven).
@@ -545,6 +563,10 @@ export async function runReview(params: {
       client: {
         businessNumber: client?.businessNumber ?? undefined,
         corpType: client?.corpType ?? undefined,
+        // The return editor has NO province control — the value is captured on
+        // the client record alone. Without it here the diagnostic reported
+        // "province not set" against a province that was set.
+        province: clientProvince(client),
       },
       hasComputed: true,
     }),

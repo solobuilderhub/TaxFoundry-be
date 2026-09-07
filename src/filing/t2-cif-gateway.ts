@@ -39,3 +39,8 @@ export function setT2CifGateway(g: T2CifGateway): void {
 export function getT2CifGateway(): T2CifGateway {
   return gateway;
 }
+
+/** Whether THIS deployment can actually transmit a T2 to CRA. */
+export function isT2CifGatewayConfigured(): boolean {
+  return !(gateway instanceof NotConfiguredGateway);
+}

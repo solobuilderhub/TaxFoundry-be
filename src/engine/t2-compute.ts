@@ -21,6 +21,7 @@ import {
 } from '@classytic/ca-tax/t2';
 import type { TaxObligation } from '@classytic/tax-core/obligation';
 import { assertFiledProvenance, type ProvenancedField } from '#shared/provenance-guard.js';
+import type { EngineComputeOutput } from './compute-types.js';
 import { buildSnapshot, type ComputationSnapshot, hashOf, T2_FORM_VERSION } from './snapshot.js';
 import { getFederalRateBook, getProvincialRateChanges } from './tax-rates.js';
 
@@ -46,6 +47,11 @@ export interface T2ComputeOutput {
   engineVersion: string;
   /** Reproducibility record — full input + result + content hashes + versions. */
   snapshot: ComputationSnapshot;
+  /**
+   * Each schedule's computed figures keyed by the CRA line they belong on, as
+   * the engine assembled them. Same shape and same purpose as Alberta's.
+   */
+  schedulePayloads: EngineComputeOutput['schedulePayloads'];
 }
 
 /**
@@ -355,6 +361,15 @@ export function runT2Compute(input: unknown, actor = 'engine'): T2ComputeOutput 
     },
     engineVersion: T2_ENGINE_VERSION,
     snapshot,
+    // The engine's own per-line breakdown, carried through to persistence.
+    //
+    // Alberta has always done this; federal never did, so a federal computed
+    // return reached the interface with its figures under names the engine
+    // chose and no line numbers at all. Every federal paper Form View therefore
+    // showed "not available" against every computed line, while the figures sat
+    // in the result object. The contract on `EngineComputeOutput` was already
+    // program-agnostic — only this line was missing.
+    schedulePayloads: b.schedulePayloads,
   };
 }
 

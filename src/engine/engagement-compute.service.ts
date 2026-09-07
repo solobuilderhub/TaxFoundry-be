@@ -285,7 +285,7 @@ export async function computeEngagementT2(
           // Fileable only when a T2 was computed from the server-assembled structured
           // return (calc + filing derive from ONE source). AT1 always fileable.
           fileable: engagement.program !== 'T2' || structuredReturn !== null,
-          // Reproducibility record (T2 emits a snapshot; AT1 does not yet).
+          // Reproducibility record (T2 and AT1 emit one; CO-17 does not yet).
           ...(out.snapshot
             ? {
                 inputHash: out.snapshot.inputHash,

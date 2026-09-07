@@ -37,3 +37,8 @@ export function setCo17FilingGateway(g: Co17FilingGateway): void {
 export function getCo17FilingGateway(): Co17FilingGateway {
   return gateway;
 }
+
+/** Whether THIS deployment can actually transmit a CO-17 to Revenu Québec. */
+export function isCo17FilingGatewayConfigured(): boolean {
+  return !(gateway instanceof NotConfiguredGateway);
+}

@@ -21,8 +21,15 @@ export interface DiagnosticContext {
   fold: Record<string, number>;
   /** The working return input (schedule-structured). */
   ri: Record<string, unknown>;
-  /** The client (BN, corp type). */
-  client: { businessNumber?: string; corpType?: string } | null;
+  /**
+   * The client (BN, corp type, province of the registered address).
+   *
+   * `province` is here because the return input has no province field — there
+   * is no control for it anywhere in the return editor. It is captured once, on
+   * the client record, and a diagnostic that reads only the return therefore
+   * reported "not set" against a province the preparer had plainly set.
+   */
+  client: { businessNumber?: string; corpType?: string; province?: string } | null;
   /** Whether a computed return exists yet. */
   hasComputed: boolean;
 }
@@ -55,6 +62,16 @@ const anyValue = (o: Record<string, unknown>): boolean =>
   Object.values(o).some((x) => x != null && x !== '' && !(Array.isArray(x) && x.length === 0));
 const ident = (c: DiagnosticContext) => rec(c.ri.identification);
 const isInactive = (c: DiagnosticContext) => ident(c).inactive === true;
+/**
+ * The province of permanent establishment, from wherever it was actually
+ * entered: the return input if a future editor ever carries one, otherwise the
+ * client's registered address, which is the only place it can be typed today.
+ */
+const province = (c: DiagnosticContext): string | undefined => {
+  const fromReturn = ident(c).province;
+  const v = (typeof fromReturn === 'string' ? fromReturn : undefined) ?? c.client?.province;
+  return v && String(v).trim() !== '' ? String(v).trim() : undefined;
+};
 
 /**
  * The rule set. Each rule is a self-contained, CRA-line-referenced check. Kept
@@ -82,9 +99,9 @@ export const DIAGNOSTIC_RULES: DiagnosticRule[] = [
     line: '750',
     citation: 'T2 Schedule 5',
     severity: 'amber',
-    when: (c) => !ident(c).province,
+    when: (c) => province(c) === undefined,
     message:
-      'Province of permanent establishment not set — provincial/territorial tax (Schedule 5) cannot be computed.',
+      'Province of permanent establishment not set — provincial/territorial tax (Schedule 5) cannot be computed. It is entered on the client record (Clients → the corporation → registered address), not on the return.',
   },
 
   // ── Financial statements (GIFI) ────────────────────────────────────────────

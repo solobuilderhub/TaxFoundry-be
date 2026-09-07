@@ -18,6 +18,9 @@ import {
   T2_CERTIFICATION_FIXTURES,
 } from '@classytic/ca-tax/t2';
 import { requireOrgStaff } from '#shared/permissions.js';
+import { isAt1FilingGatewayConfigured } from '../../filing/at1-gateway.js';
+import { isCo17FilingGatewayConfigured } from '../../filing/co17-gateway.js';
+import { isT2CifGatewayConfigured } from '../../filing/t2-cif-gateway.js';
 
 const certificationResource = defineResource({
   name: 'certification',
@@ -41,6 +44,38 @@ const certificationResource = defineResource({
           },
         };
       },
+    },
+    {
+      method: 'GET',
+      path: '/filing-channels',
+      operation: 'filingChannelAvailability',
+      summary: 'Which filing channels THIS deployment can actually transmit on',
+      permissions: requireOrgStaff(),
+      mcp: { annotations: { readOnlyHint: true } },
+      /**
+       * Reported rather than hard-coded in the interface.
+       *
+       * The export screen announced "live e-file isn't enabled yet" for every
+       * program, on a build whose AT1 transmission reaches TRA and returns real
+       * response codes. Whether a channel is live is a property of the running
+       * deployment's configuration — the browser cannot know it, and guessing it
+       * in copy produced a screen that contradicted its own button.
+       */
+      handler: async () => ({
+        data: {
+          T2: { transmit: isT2CifGatewayConfigured(), authority: 'CRA', channel: 'CIF' },
+          AT1: {
+            transmit: isAt1FilingGatewayConfigured(),
+            authority: 'Alberta TRA',
+            channel: 'Net File',
+          },
+          CO17: {
+            transmit: isCo17FilingGatewayConfigured(),
+            authority: 'Revenu Québec',
+            channel: 'CO-17',
+          },
+        },
+      }),
     },
   ],
 });

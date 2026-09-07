@@ -2,7 +2,11 @@
  * Line-level diagnostics engine — data-driven completeness / consistency rules.
  */
 import { describe, it, expect } from 'vitest';
-import { runDiagnostics, DIAGNOSTIC_RULES, type DiagnosticContext } from '../src/review/diagnostics.js';
+import {
+  runDiagnostics,
+  DIAGNOSTIC_RULES,
+  type DiagnosticContext,
+} from '../src/review/diagnostics.js';
 
 const ctx = (over: Partial<DiagnosticContext>): DiagnosticContext => ({
   program: 'T2',
@@ -27,15 +31,37 @@ describe('runDiagnostics', () => {
   });
 
   it('flags a missing province (Schedule 5) as amber', () => {
-    const d = runDiagnostics(ctx({ client: { corpType: 'CCPC' } })).find((x) => x.code === 'D_PROVINCE_MISSING');
+    const d = runDiagnostics(ctx({ client: { corpType: 'CCPC' } })).find(
+      (x) => x.code === 'D_PROVINCE_MISSING',
+    );
     expect(d?.severity).toBe('amber');
     expect(d?.line).toBe('750');
   });
 
+  /**
+   * The province is typed on the CLIENT record — the return editor has no
+   * province control at all. Reading only `ri.identification.province` made the
+   * review say "province not set" to a preparer looking at a client whose
+   * registered address plainly said Alberta.
+   */
+  it('does NOT flag a missing province when it is set on the client record', () => {
+    expect(codes(ctx({ client: { corpType: 'CCPC', province: 'AB' } }))).not.toContain(
+      'D_PROVINCE_MISSING',
+    );
+  });
+
+  it('says where the province is entered, since it is not on the return', () => {
+    const d = runDiagnostics(ctx({ client: { corpType: 'CCPC' } })).find(
+      (x) => x.code === 'D_PROVINCE_MISSING',
+    );
+    expect(d?.message).toMatch(/client record/i);
+  });
+
   it('flags missing financials unless the return is inactive', () => {
     expect(codes(ctx({ client: { corpType: 'CCPC' } }))).toContain('D_INCOME_STATEMENT_REQUIRED');
-    expect(codes(ctx({ client: { corpType: 'CCPC' }, ri: { identification: { inactive: true } } })))
-      .not.toContain('D_INCOME_STATEMENT_REQUIRED');
+    expect(
+      codes(ctx({ client: { corpType: 'CCPC' }, ri: { identification: { inactive: true } } })),
+    ).not.toContain('D_INCOME_STATEMENT_REQUIRED');
   });
 
   it('a complete return raises no red diagnostics', () => {
@@ -52,8 +78,9 @@ describe('runDiagnostics', () => {
   });
 
   it('catches Part I tax on nil income (red)', () => {
-    const d = runDiagnostics(ctx({ client: { corpType: 'CCPC' }, fold: { taxableIncome: 0, partITaxPayable: 5000 } }))
-      .find((x) => x.code === 'D_TAX_ON_NIL_INCOME');
+    const d = runDiagnostics(
+      ctx({ client: { corpType: 'CCPC' }, fold: { taxableIncome: 0, partITaxPayable: 5000 } }),
+    ).find((x) => x.code === 'D_TAX_ON_NIL_INCOME');
     expect(d?.severity).toBe('red');
   });
 
