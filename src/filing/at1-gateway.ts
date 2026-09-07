@@ -17,6 +17,13 @@ export interface At1TransmitResult {
   confirmationNumber: string | null;
   errorCodes: string[];
   /**
+   * TRA's own message for each error code, where it sent one — `"20100: Phone
+   * Number is invalid…"`, or `"20100: (no message from TRA)"` when it did not.
+   * Kept because a bare numeric code is unreadable to the person who has to act
+   * on it, and TRA's codes are documented only in the specification.
+   */
+  errorMessages?: string[];
+  /**
    * The exact bytes TRA sent back, before any parsing. Optional because a test
    * fake has no wire response to report — but the REAL client always supplies
    * it. Without this, a submission attempt's `rawResponse` field (see

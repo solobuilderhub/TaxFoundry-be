@@ -28,7 +28,7 @@
     "@classytic/fin-io": "^0.6.7",
     "@classytic/ledger-ca": "^0.5.0",
     "@classytic/mongokit": "^3.34.0",
-    "@classytic/primitives": "^0.23.0",
+    "@classytic/primitives": "^0.26.4",
     "@classytic/repo-core": "^0.24.0",
     "@classytic/tax-core": "^0.3.0",
     "@fastify/cors": "^11.3.0",

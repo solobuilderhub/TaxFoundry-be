@@ -113,10 +113,11 @@ export function interpretFileReturnResponse(entries: At1ResponseEntry[]): At1Tra
   const accepted = entries.some((e) => e.code === CODE_SUCCESSFULLY_FILED);
   const confirmationNumber =
     entries.find((e) => e.code === CODE_CONFIRMATION_NUMBER)?.message ?? null;
-  const errorCodes = entries.filter((e) => isErrorCode(e.code)).map((e) => e.code);
+  const errors = entries.filter((e) => isErrorCode(e.code));
+  const errorCodes = errors.map((e) => e.code);
 
   if (accepted) {
-    return { status: 'accepted', confirmationNumber, errorCodes: [] };
+    return { status: 'accepted', confirmationNumber, errorCodes: [], errorMessages: [] };
   }
   return {
     status: 'rejected',
@@ -124,6 +125,13 @@ export function interpretFileReturnResponse(entries: At1ResponseEntry[]): At1Tra
     // An empty body would otherwise yield "rejected with no reason", which reads
     // like a clean refusal. Say what actually happened.
     errorCodes: errorCodes.length > 0 ? errorCodes : ['NO_RECOGNISED_RESPONSE'],
+    // TRA's own words, kept rather than discarded. It does not always send
+    // any — a rejection for filer details came back as a bare `20100` — so a
+    // code with no text is reported as such instead of vanishing, which is
+    // what made that rejection unreadable.
+    errorMessages: errors.map((e) =>
+      e.message?.trim() ? `${e.code}: ${e.message.trim()}` : `${e.code}: (no message from TRA)`,
+    ),
   };
 }
 

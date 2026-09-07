@@ -8,9 +8,11 @@
  * TransmissionAttempted (and, if accepted, CRAAcknowledged) facts + advance status.
  */
 
+import { validateAt1Transmitter } from '@classytic/ca-tax/t2';
 import { withTransaction } from '@classytic/mongokit';
 import { createError } from '@classytic/repo-core/errors';
 import mongoose from 'mongoose';
+import { at1Transmitter } from '#config/at1-transmitter.js';
 import type { EngagementYearDocument } from '#resources/engagement/engagement-year/engagement-year.model.js';
 import engagementYearRepository from '#resources/engagement/engagement-year/engagement-year.repository.js';
 import type { ComputedReturnDocument } from '#resources/ledger/computed-return/computed-return.model.js';
@@ -23,8 +25,8 @@ import { appendFact } from '#shared/append-fact.js';
 import type { WithId } from '#shared/db.js';
 import { assertFiledProvenance, type ProvenancedField } from '#shared/provenance-guard.js';
 import { type Certification, prepareAt1NetFile } from '../engine/at1-netfile.service.js';
-import { getAt1FilingGateway } from './at1-gateway.js';
 import type { At1TransmitResult } from './at1-gateway.js';
+import { getAt1FilingGateway } from './at1-gateway.js';
 import {
   beginSubmissionAttempt,
   completeSubmissionAttempt,
@@ -93,6 +95,24 @@ export async function transmitAt1(params: TransmitAt1Params): Promise<TransmitAt
     );
   }
 
+  // The FILER's own details, against TRA's own rules, before anything leaves.
+  // Checked HERE and not in `prepareAt1NetFile`: preparing a payload for review
+  // is a local act that a deployment without filer credentials should still be
+  // able to do; transmitting is not. Without this the first sign of a bad
+  // config is a live round trip returning a bare numeric code and no message —
+  // a placeholder phone came back `20100` after 7.5 seconds, with nothing
+  // pointing at the phone, the environment variable, or the fact that the
+  // return itself was fine. 422: the request is well-formed, the server is not.
+  const transmitterDefects = validateAt1Transmitter(at1Transmitter);
+  if (transmitterDefects.length > 0) {
+    throw createError(
+      422,
+      `Cannot transmit: the filer (transmitter) configuration would be rejected by TRA — ${transmitterDefects
+        .map((d) => `${d.field} [TRA ${d.traCode}]: ${d.message}`)
+        .join(' ')} These are server settings, not anything on this return.`,
+    );
+  }
+
   // Render the payload (also validates certification), then the final guard.
   const { xml, payloadHash } = await prepareAt1NetFile({
     engagementId: params.engagementId,
@@ -156,6 +176,7 @@ export async function transmitAt1(params: TransmitAt1Params): Promise<TransmitAt
           status: result.status,
           confirmationNumber: result.confirmationNumber,
           errorCodes: result.errorCodes,
+          errorMessages: result.errorMessages ?? [],
           acknowledgedAt: submittedAt,
           t183: {
             signedBy: t183Auth.officerName,

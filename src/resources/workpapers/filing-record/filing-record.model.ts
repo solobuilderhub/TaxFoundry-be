@@ -62,6 +62,12 @@ const filingRecordSchema = new mongoose.Schema(
     status: { type: String, enum: FILING_STATUSES, default: 'submitted', index: true },
     confirmationNumber: { type: String, default: null },
     errorCodes: { type: [String], default: [] },
+    /**
+     * The revenue authority's own wording for each code above, where it sent
+     * any. A bare numeric code is unreadable to whoever has to act on the
+     * rejection, and the codes are documented only in the filing specification.
+     */
+    errorMessages: { type: [String], default: [] },
     acknowledgedAt: { type: Date, default: null },
 
     organizationId: {
