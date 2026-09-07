@@ -74,6 +74,30 @@ const province = (c: DiagnosticContext): string | undefined => {
 };
 
 /**
+ * Whether the return names a province anywhere at all.
+ *
+ * There are two ways a return says where the corporation operates, and the
+ * provincial allocation schedule's own hint states them: a multi-jurisdiction
+ * return lists a permanent establishment per province, and a single-province
+ * return "uses the province on Identification".
+ *
+ * Reading only the second was wrong twice over. The province is entered on the
+ * CLIENT record, not the return — there is no province control in the return
+ * editor at all, which is what made this rule report "not set" against a
+ * province the preparer had plainly set. And a corporation with establishments
+ * in Ontario and British Columbia has named two provinces without touching
+ * either of the fields this used to look at.
+ */
+const hasProvince = (c: DiagnosticContext): boolean => {
+  if (province(c) !== undefined) return true;
+  const allocation = rec(c.ri.provincialAllocation);
+  const establishments = Array.isArray(allocation.establishments)
+    ? (allocation.establishments as { province?: unknown }[])
+    : [];
+  return establishments.some((e) => typeof e?.province === 'string' && e.province.trim() !== '');
+};
+
+/**
  * The rule set. Each rule is a self-contained, CRA-line-referenced check. Kept
  * NON-OVERLAPPING with the semantic review flags (SBD/CCA/gains/provincial),
  * which the review generator computes separately.
@@ -99,9 +123,9 @@ export const DIAGNOSTIC_RULES: DiagnosticRule[] = [
     line: '750',
     citation: 'T2 Schedule 5',
     severity: 'amber',
-    when: (c) => province(c) === undefined,
+    when: (c) => !hasProvince(c),
     message:
-      'Province of permanent establishment not set — provincial/territorial tax (Schedule 5) cannot be computed. It is entered on the client record (Clients → the corporation → registered address), not on the return.',
+      'Province of permanent establishment not set — provincial/territorial tax (Schedule 5) cannot be computed. For a single-province return it comes from the client record (Clients → the corporation → registered address); for a corporation operating in more than one, list a permanent establishment per province on the Provincial Allocation schedule.',
   },
 
   // ── Financial statements (GIFI) ────────────────────────────────────────────

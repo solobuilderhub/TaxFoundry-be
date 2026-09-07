@@ -1,11 +1,11 @@
 /**
  * Line-level diagnostics engine — data-driven completeness / consistency rules.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  runDiagnostics,
   DIAGNOSTIC_RULES,
   type DiagnosticContext,
+  runDiagnostics,
 } from '../src/review/diagnostics.js';
 
 const ctx = (over: Partial<DiagnosticContext>): DiagnosticContext => ({
@@ -89,5 +89,45 @@ describe('runDiagnostics', () => {
       expect(r.code).toBeTruthy();
       expect(r.message).toBeTruthy();
     }
+  });
+});
+
+/**
+ * A multi-jurisdiction return names its provinces on the allocation schedule,
+ * one permanent establishment per province. That is the OTHER way a return says
+ * where the corporation operates, and reading only the single-province path
+ * flagged a corporation that had named two provinces explicitly.
+ */
+describe('the province is named in two different places', () => {
+  it('accepts a permanent establishment list as naming the province', () => {
+    expect(
+      codes(
+        ctx({
+          client: { corpType: 'CCPC' },
+          ri: {
+            provincialAllocation: { establishments: [{ province: 'ON' }, { province: 'BC' }] },
+          },
+        }),
+      ),
+    ).not.toContain('D_PROVINCE_MISSING');
+  });
+
+  it('still flags an establishment list with no province on it', () => {
+    expect(
+      codes(
+        ctx({
+          client: { corpType: 'CCPC' },
+          ri: { provincialAllocation: { establishments: [{ grossRevenue: 100 }] } },
+        }),
+      ),
+    ).toContain('D_PROVINCE_MISSING');
+  });
+
+  it('names both routes in the message, since the preparer may need either', () => {
+    const d = runDiagnostics(ctx({ client: { corpType: 'CCPC' } })).find(
+      (x) => x.code === 'D_PROVINCE_MISSING',
+    );
+    expect(d?.message).toMatch(/client record/i);
+    expect(d?.message).toMatch(/Provincial Allocation/i);
   });
 });
