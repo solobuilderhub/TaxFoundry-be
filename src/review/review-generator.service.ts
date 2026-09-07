@@ -23,7 +23,7 @@ import type { ReviewMemoDocument } from '#resources/workpapers/review-memo/revie
 import reviewMemoRepository from '#resources/workpapers/review-memo/review-memo.repository.js';
 import { appendFact } from '#shared/append-fact.js';
 import type { WithId } from '#shared/db.js';
-import { getFederalRateBook } from '../engine/tax-rates.js';
+import { getAlbertaRateBook, getFederalRateBook, getQuebecRateBook } from '../engine/tax-rates.js';
 import { runDiagnostics } from './diagnostics.js';
 
 type Severity = 'green' | 'amber' | 'red';
@@ -44,7 +44,7 @@ interface ReviewInput {
   businessNumber?: string;
   fold: Record<string, number>;
   ri: Record<string, any>;
-  /** True when the return's tax year has an EXACT certified rate table (T2). */
+  /** True when the return's tax year has an EXACT certified rate table, in ITS OWN program's rate book. */
   rateYearCertified?: boolean;
   /** The return's tax year (for the rate-year flag message). */
   taxYear?: number;
@@ -538,13 +538,35 @@ export async function runReview(params: {
   }
 
   const ri = (engagement.returnInput ?? {}) as Record<string, unknown>;
-  // T2 rate-year certification: does the return's exact tax year have an
-  // authoritative rate table, or is it computed on carried-forward rates?
+  /**
+   * Rate-year certification, for EVERY program rather than only the federal one.
+   *
+   * The question is the same in all three: does this return's exact tax year
+   * have an authoritative rate table, or is it computed on rates carried
+   * forward from an earlier year? `resolveRates` carries the newest earlier
+   * entry forward rather than throwing, by design, so a return with no table
+   * for its year computes cleanly and says nothing.
+   *
+   * This check used to run only when the program was T2, and returned
+   * `undefined` otherwise — which the flag reads as "not applicable" and skips.
+   * The Québec book ships 2024 only and no deployment registers more, so a 2025
+   * CO-17 was computed on 2024 Québec rates and reviewed green. Alberta escaped
+   * only by coincidence: its 2025 table is a copy of 2024. The same hole opens
+   * for Alberta in 2026, which `rate-years.ts` deliberately declines to
+   * register without a published table.
+   *
+   * Each program is checked against ITS OWN book. A federal book with a 2025
+   * entry says nothing about whether Québec has one.
+   */
   const taxYear = new Date(engagement.taxYearEnd as unknown as string).getUTCFullYear();
-  const rateYearCertified =
-    String(engagement.program) === 'T2'
-      ? hasExactRateYear(getFederalRateBook(), taxYear)
-      : undefined;
+  const rateBookForProgram = {
+    T2: getFederalRateBook,
+    AT1: getAlbertaRateBook,
+    CO17: getQuebecRateBook,
+  }[String(engagement.program)];
+  const rateYearCertified = rateBookForProgram
+    ? hasExactRateYear(rateBookForProgram() as Parameters<typeof hasExactRateYear>[0], taxYear)
+    : undefined;
   const flags = [
     ...evaluateReviewFlags({
       program: String(engagement.program),

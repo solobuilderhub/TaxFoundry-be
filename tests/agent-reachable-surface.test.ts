@@ -98,4 +98,26 @@ describe('the agent-reachable surface', () => {
     // …and it must NOT still be instructing the agent to sign off.
     expect(src).not.toMatch(/then `sign-off`/);
   });
+
+  /**
+   * The prompt described an engagement-year as "one client + one tax year +
+   * program (T2 or AT1)" long after CO17 existed, and said nothing about the
+   * fact that a provincial corporation owes TWO returns. An agent working from
+   * that would create one engagement for an Alberta client and never produce
+   * the federal return at all — the same trap the interface set for people.
+   */
+  it('names every program, and says a provincial corporation owes two returns', async () => {
+    const src = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('../src/mcp/index.ts', import.meta.url), 'utf8'),
+    );
+    // The prompt is an array of string literals that the formatter wraps where
+    // it likes, so a sentence can straddle two elements. Assert against the
+    // text an AGENT receives, not against the source's line breaks.
+    const prompt = src.replace(/',\s+'/g, ' ').replace(/\s+/g, ' ');
+    for (const program of ['T2', 'AT1', 'CO17']) expect(prompt).toContain(program);
+    expect(prompt).toMatch(/owes two returns/i);
+    expect(prompt).toContain('create-companion-filing');
+    // And it must not repeat the claim that the payload actions work anywhere.
+    expect(prompt).toMatch(/REFUSES on the wrong program/);
+  });
 });

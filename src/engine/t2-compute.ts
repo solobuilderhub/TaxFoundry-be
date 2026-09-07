@@ -52,6 +52,8 @@ export interface T2ComputeOutput {
    * the engine assembled them. Same shape and same purpose as Alberta's.
    */
   schedulePayloads: EngineComputeOutput['schedulePayloads'];
+  /** What the schedules want the preparer to see. Same as Alberta's. */
+  issues: EngineComputeOutput['issues'];
 }
 
 /**
@@ -370,6 +372,18 @@ export function runT2Compute(input: unknown, actor = 'engine'): T2ComputeOutput 
     // in the result object. The contract on `EngineComputeOutput` was already
     // program-agnostic — only this line was missing.
     schedulePayloads: b.schedulePayloads,
+    /*
+     * The schedules' own warnings, carried through the same way Alberta's are.
+     * They were computed and dropped: the EIFEL schedule telling a preparer the
+     * return cannot establish excluded-entity status reached nothing at all.
+     *
+     * Read through a narrow cast because `FederalT2Result.issues` lands in the
+     * engine release AFTER the one this app currently pins. Against the pinned
+     * version this is `undefined` and the field is simply absent from the
+     * computed return, which is the same as today's behaviour; against the next
+     * one the warnings appear. Drop the cast when the dependency is bumped.
+     */
+    issues: (b as { issues?: string[] }).issues,
   };
 }
 

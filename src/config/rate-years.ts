@@ -2,11 +2,29 @@
  * The tax years this deploy certifies rates for.
  *
  * `@classytic/ca-tax` ships 2024 as its reference year and nothing later; the
- * review layer red-flags any return whose tax year has no exact entry in the
- * host book ("RATE_YEAR_UNCERTIFIED"), and the T2 CIF and AT1 filing paths
- * refuse it. Until this module existed nothing registered a year, so every 2025
+ * review layer red-flags any return whose tax year has no exact entry in ITS
+ * OWN program's book ("RATE_YEAR_UNCERTIFIED"), and the T2 CIF path refuses it
+ * outright. Until this module existed nothing registered a year, so every 2025
  * return was unfileable on rates alone. Onboarding a year is a data change
  * here, sourced from the published documents named beside each entry.
+ *
+ * ── What refuses, and what only warns ───────────────────────────────────────
+ *
+ * The review flag covers all three programs. The hard filing refusal
+ * (`hasExactRateYear` inside `composeT2FilingData`) covers only the federal
+ * CIF path — the Alberta and Québec renderers do not check. This comment used
+ * to claim the AT1 path refused too, and it never has.
+ *
+ * That gap mattered most for Québec, whose book still ships 2024 only and which
+ * no deployment registers a later year for: `resolveRates` carries the newest
+ * earlier table forward rather than throwing, so a 2025 CO-17 computed on 2024
+ * Québec rates and reviewed green. Alberta escaped by coincidence — its 2025
+ * table is a copy of 2024 — and the same hole opens for Alberta in 2026, which
+ * this module deliberately declines to register without a published table.
+ *
+ * Registering a year you do not have published rates for would be worse than
+ * the gap. The flag is the honest control: it says the return cannot be filed
+ * on carried-forward rates, without inventing what the rates are.
  *
  * ── 2025 ──────────────────────────────────────────────────────────────────
  *
