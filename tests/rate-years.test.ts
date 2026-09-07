@@ -4,8 +4,9 @@
  * `review-generator.service.ts` and `t2-cif.service.ts` both gate on
  * `hasExactRateYear(getFederalRateBook(), taxYear)`.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+
 import { hasExactRateYear, resolveRates } from '@classytic/ca-tax/t2';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AB_TAX_2025, CORP_TAX_2025, registerRateYears } from '../src/config/rate-years.js';
 import { getAlbertaRateBook, getFederalRateBook, resetRateBooks } from '../src/engine/tax-rates.js';
 
@@ -44,11 +45,33 @@ describe('registerRateYears', () => {
 
   it('keeps Alberta at 8% / 2% / $500,000 — unchanged since 2020-07-01', () => {
     registerRateYears();
-    expect(AB_TAX_2025).toEqual({ GENERAL_RATE: 0.08, SMALL_BUSINESS_RATE: 0.02, BUSINESS_LIMIT: 500_000 });
+    expect(AB_TAX_2025).toEqual({
+      GENERAL_RATE: 0.08,
+      SMALL_BUSINESS_RATE: 0.02,
+      BUSINESS_LIMIT: 500_000,
+    });
   });
 
   it('does not certify 2026 — no primary source was available to verify it', () => {
     registerRateYears();
     expect(hasExactRateYear(getFederalRateBook(), 2026)).toBe(false);
+  });
+});
+
+describe('the filer phone reaches the wire as TRA wants it', () => {
+  it('normalizes a written-out number to national digits', async () => {
+    // TRA rule 20100 wants 10-15 digits, numeric — no `+`, no punctuation.
+    // The operator should not have to know that.
+    const { toNationalDigits } = await import('@classytic/contact/phone');
+    expect(toNationalDigits('+1 780 555 0100')).toBe('7805550100');
+    expect(toNationalDigits('+1 (780) 555-0100')).toBe('7805550100');
+  });
+
+  it('rejects numbers a length check would admit', async () => {
+    // Both are ten digits. Both are unreachable. This is why the check is
+    // metadata-backed rather than `digits.length >= 10`.
+    const { toNationalDigits } = await import('@classytic/contact/phone');
+    expect(() => toNationalDigits('+10000000000')).toThrow();
+    expect(() => toNationalDigits('+11234567890')).toThrow();
   });
 });

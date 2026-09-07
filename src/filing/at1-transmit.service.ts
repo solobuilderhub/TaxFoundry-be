@@ -47,6 +47,17 @@ export interface TransmitAt1Result {
   filingRecordId: string;
   status: 'accepted' | 'rejected';
   confirmationNumber: string | null;
+  /**
+   * Why a `rejected` filing was refused. Empty on acceptance.
+   *
+   * On the response, not only on the filing record: a rejection comes back on
+   * an HTTP 200 — the REQUEST succeeded, the FILING did not — so a caller that
+   * reads the status code alone reports a refused return as filed. It needs the
+   * reason in the same payload to say anything truthful.
+   */
+  errorCodes: string[];
+  /** TRA's own wording per code, where it sent any. */
+  errorMessages: string[];
 }
 
 export async function transmitAt1(params: TransmitAt1Params): Promise<TransmitAt1Result> {
@@ -240,5 +251,11 @@ export async function transmitAt1(params: TransmitAt1Params): Promise<TransmitAt
     filingRecordId: String(filing._id),
     status: result.status,
     confirmationNumber: result.confirmationNumber,
+    // Carried to the caller, not just written to the filing record: a rejection
+    // arrives on a 200 (the request succeeded; the FILING did not), so a client
+    // that reads only the HTTP status will report a refused return as filed.
+    // It needs the reason in the same response to say otherwise.
+    errorCodes: result.errorCodes,
+    errorMessages: result.errorMessages ?? [],
   };
 }
