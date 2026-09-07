@@ -20,6 +20,10 @@ import { prepareAt1NetFile } from '../../../engine/at1-netfile.service.js';
 import { prepareAt1Rsi } from '../../../engine/at1-rsi.service.js';
 import { CcaPreviewRequestSchema, previewCcaClasses } from '../../../engine/cca-preview.service.js';
 import {
+  createCompanionFiling,
+  findCompanionFiling,
+} from '../../../engine/companion-filing.service.js';
+import {
   computeEngagementT2,
   verifyEngagementReproducible,
 } from '../../../engine/engagement-compute.service.js';
@@ -176,6 +180,37 @@ const engagementYearResource = defineResource<EngagementYearDocument>({
           ...(d.evidenceRef ? { evidenceRef: d.evidenceRef } : {}),
           ...(d.formVersion ? { formVersion: d.formVersion } : {}),
         });
+      },
+    },
+    /**
+     * The federal return that belongs beside a provincial one.
+     *
+     * A corporation with an Alberta permanent establishment owes two returns,
+     * and an engagement here is one filing, so it needs two engagements. But
+     * the provincial engagement already collects the whole federal dataset —
+     * Alberta is computed FROM the federal figures — so this creates the
+     * federal engagement with that data already in it rather than making the
+     * preparer type the same return a second time.
+     *
+     * Idempotent: called twice, it returns the engagement the first call made.
+     */
+    'create-companion-filing': {
+      description:
+        'Create the federal T2 engagement beside a provincial one, carrying the return input across',
+      handler: async (id, _data, req) => {
+        const orgId = getOrgId(req.scope);
+        const userId = getUserId(req.scope);
+        if (!orgId) throw createError(403, 'Organization context required');
+        if (!userId) throw createError(403, 'User context required');
+        return createCompanionFiling({ engagementId: id, orgId, userId });
+      },
+    },
+    'companion-filing': {
+      description: 'The federal T2 engagement beside this provincial one, when it exists',
+      handler: async (id, _data, req) => {
+        const orgId = getOrgId(req.scope);
+        if (!orgId) throw createError(403, 'Organization context required');
+        return { companion: await findCompanionFiling({ engagementId: id, orgId }) };
       },
     },
     'prepare-cif': {

@@ -177,8 +177,31 @@ export async function composeT2FilingData(params: ComposeT2FilingParams): Promis
     organizationId: params.orgId,
   })) as WithId<EngagementYearDocument> | null;
   if (!engagement) throw createError(404, 'Engagement year not found');
+  /**
+   * The federal payload can only come from a federal engagement, and the reason
+   * is not bureaucratic.
+   *
+   * A provincial engagement computes the federal return internally — Alberta
+   * taxes the federal taxable income allocated to the province — but that
+   * result is TRANSIENT. What it persists is the provincial one:
+   * `runAT1Compute` emits `albertaTaxableIncome`, `albertaTaxPayable` and no
+   * federal line at all. This function reads federal names out of the fold
+   * below, so running it against a provincial engagement would not fail. It
+   * would render a federal return with every federal figure missing, which is
+   * the one outcome worse than refusing.
+   *
+   * The message names the way out, because the data is already there: the
+   * `create-companion-filing` action builds the federal engagement from this
+   * one's return input, so nothing is typed twice.
+   */
   if (engagement.program !== 'T2')
-    throw createError(400, 'CIF preparation applies to T2 engagements');
+    throw createError(
+      400,
+      `The federal CIF payload comes from a T2 engagement, and this is a ${String(engagement.program)} one. ` +
+        'A provincial engagement computes the federal figures but does not keep them, so a payload built ' +
+        'from it would be missing every federal amount. Use the create-companion-filing action to open the ' +
+        "federal engagement with this return's data already in it.",
+    );
 
   // Fail-closed on the rate year for a real filing: the rate book resolver
   // carries the latest earlier table forward so DRAFTS always compute, but a
