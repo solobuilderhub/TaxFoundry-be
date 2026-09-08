@@ -11,12 +11,13 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { emitReturnInput } from '../scripts/emit-return-input.js';
+import { emitReturnInput, resolveDest } from '../scripts/emit-return-input.js';
 
-const CHECKED_IN = new URL(
-  '../../web/app/dashboard/engagements/[id]/return/_lib/return-input.ts',
-  import.meta.url,
-);
+// Resolved by the emitter itself rather than repeated here — the two used to
+// carry separate copies of a hard-coded `../../web/…` monorepo path, so a
+// checkout with any other layout failed this test on a missing file rather
+// than on real drift.
+const CHECKED_IN = resolveDest();
 
 describe('apps/web return-input.ts is in step with the ReturnInput contract', () => {
   it('matches a fresh emit exactly', async () => {

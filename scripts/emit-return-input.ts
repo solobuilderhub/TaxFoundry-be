@@ -13,15 +13,47 @@
  *
  *   npx tsx scripts/emit-return-input.ts
  */
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { compile, type JSONSchema } from 'json-schema-to-typescript';
 import { z } from 'zod';
 import { AT1_DISPOSITION_CATEGORY_VALUES, RESERVE_TYPE_VALUES } from '../src/engine/contracts/t2-input.js';
 import { ReturnInputSchema } from '../src/engine/contracts/return-input.js';
 
-const DEST =
-  '../../web/app/dashboard/engagements/[id]/return/_lib/return-input.ts';
+/**
+ * Where the web repo's copy lives, relative to this script.
+ *
+ * Resolved against the CANDIDATES below rather than a single hard-coded path:
+ * this used to be `../../web/…`, which assumed an `apps/server` + `apps/web`
+ * monorepo. Checked out as two sibling repos — which is how they are actually
+ * deployed and cloned — that resolves outside both of them, so the emitter
+ * wrote nowhere and `return-input-drift.test.ts` failed on a missing file.
+ *
+ * `TAXFOUNDRY_WEB_DIR` overrides both, for a layout neither candidate covers.
+ */
+const DEST_SUFFIX = 'app/dashboard/engagements/[id]/return/_lib/return-input.ts';
+// Both are relative to THIS FILE, which sits in `scripts/` — so `../../` is the
+// directory containing this repo, not this repo's own root.
+const CANDIDATE_WEB_DIRS = [
+  '../../web/', // apps/server + apps/web monorepo
+  '../../TaxFoundry-fe/', // two sibling repos checked out side by side
+];
+
+export function resolveDest(): URL {
+  const override = process.env.TAXFOUNDRY_WEB_DIR;
+  if (override) {
+    return new URL(DEST_SUFFIX, pathToFileURL(`${override.replace(/\/?$/, '/')}`));
+  }
+  for (const dir of CANDIDATE_WEB_DIRS) {
+    const candidate = new URL(`${dir}${DEST_SUFFIX}`, import.meta.url);
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    `Cannot find the web repo's return-input.ts. Looked for ${DEST_SUFFIX} under ` +
+      `${CANDIDATE_WEB_DIRS.join(' and ')} relative to ${import.meta.url}. ` +
+      'Set TAXFOUNDRY_WEB_DIR to the web repo root if it lives somewhere else.',
+  );
+}
 
 const HEADER = `/**
  * The working return — the shape persisted on \`engagement.returnInput\`.
@@ -102,8 +134,9 @@ export async function emitReturnInput(): Promise<string> {
 
 async function main() {
   const out = await emitReturnInput();
-  writeFileSync(new URL(DEST, import.meta.url), out);
-  console.log(`ReturnInput: written to ${DEST}`);
+  const dest = resolveDest();
+  writeFileSync(dest, out);
+  console.log(`ReturnInput: written to ${dest.pathname}`);
 }
 
 // Only run when invoked directly (`npx tsx scripts/emit-return-input.ts`),

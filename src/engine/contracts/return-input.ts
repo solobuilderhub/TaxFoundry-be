@@ -30,6 +30,7 @@
 import { z } from 'zod';
 import {
   AlbertaContinuityValues,
+  AlbertaReconciliation12Values,
   AlbertaDonationsValues,
   AlbertaForeignInvestment4Values,
   AlbertaIegValues,
@@ -98,6 +99,7 @@ export const ReturnInputSchema = z
     albertaSbd: AlbertaSbdValues.optional(),
     albertaDonations: AlbertaDonationsValues.optional(),
     albertaContinuity: AlbertaContinuityValues.optional(),
+    albertaReconciliation12: AlbertaReconciliation12Values.optional(),
     albertaIeg: AlbertaIegValues.optional(),
     albertaOtherCredits3: AlbertaOtherCredits3Values.optional(),
     albertaForeignInvestment4: AlbertaForeignInvestment4Values.optional(),

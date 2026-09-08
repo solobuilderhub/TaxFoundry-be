@@ -166,11 +166,34 @@ export const AlbertaDonationsValues = z
 /** AT1 Schedule 21, lines 151-169 — ONE prior vintage (1-20 years ago) of the non-capital loss pool. */
 export const NonCapitalLossVintageRow = z
   .object({
-    yearsAgo: z.number().optional().describe('1 = the immediately preceding taxation year, up to 20 (the expiry limit).'),
-    taxYearEnd: z.string().optional(),
-    balanceAtBeginning: z.number().optional(),
-    adjustments: z.number().optional().describe('Signed — an addition or a reduction to this vintage.'),
-    applied: z.number().optional().describe('Applied to reduce taxable income this year, from THIS vintage specifically.'),
+    yearsAgo: z
+      .number()
+      .optional()
+      .describe(
+        '151 — 0 is the CURRENT year, 1 to 20 the preceding taxation years (20 being the expiry limit).',
+      ),
+    taxYearEnd: z.string().optional().describe('153'),
+    balanceAtBeginning: z
+      .number()
+      .optional()
+      .describe('155 — shaded on the current-year row: a loss arising this year has no opening balance.'),
+    lossIncurredInCurrentYear: z
+      .number()
+      .optional()
+      .describe(
+        '157 — the CURRENT-year row only; the form shades this column for every preceding vintage.',
+      ),
+    adjustments: z.number().optional().describe('159 — signed: an addition or a reduction to this vintage.'),
+    lossCarriedBack: z
+      .number()
+      .optional()
+      .describe(
+        '165 — the CURRENT-year row only; shaded for every preceding vintage. A carry-back also requires Schedule 10.',
+      ),
+    applied: z
+      .number()
+      .optional()
+      .describe('167 — applied to reduce taxable income this year, from THIS vintage specifically.'),
   })
   .meta({ id: 'NonCapitalLossVintageRow' });
 
@@ -259,8 +282,121 @@ export const RifeContinuityValues = z
  */
 export const AlbertaContinuityValues = z
   .object({
+    // ── Part 1, lines 002-019 — the Division C deductions ────────────────────
+    //
+    // The eight entries the form asks for between Alberta net income (001) and
+    // the current-year non-capital loss (021). Every one is `role: 'input'` on
+    // the printed form, so a preparer states them directly.
+    //
+    // CAPTURED BUT NOT YET COMPUTED WITH. `assemble-at1-schedules.ts` still
+    // derives line 021 via `albertaCurrentYearLoss(schedule12)`, from the
+    // federal reconciliation, so a value entered here is persisted on
+    // `returnInput` and shown back, but does not yet move the filed figure.
+    // Wiring it follows the override pattern the pools already use (an explicit
+    // Alberta entry wins, a blank falls back to the federal derivation) and is
+    // a deliberate separate step, because it changes what gets FILED.
+    rifeDeducted: z
+      .number()
+      .optional()
+      .describe(
+        '021002 — RIFE deducted in the year under ITA paragraph 111(1)(a.1). A POSITIVE amount; ' +
+          'the form subtracts it. The SAME figure the form asks for again at line 240 on page 5 ' +
+          '(`rifeDeductedForTaxYear`), which is where it is capped. Kept as two fields because the ' +
+          'form prints two boxes with two line ids and both are filed; nothing yet reconciles them.',
+      ),
+    netCapitalLossesDeducted: z
+      .number()
+      .optional()
+      .describe('021003 — net capital losses deducted in the year. A POSITIVE amount.'),
+    taxableDividendsDeductible: z.number().optional().describe('021005'),
+    partVI1TaxDeductible: z.number().optional().describe('021007'),
+    prospectorAndGrubstakerShares: z.number().optional().describe('021011'),
+    nonQualifiedSecuritiesDeduction: z
+      .number()
+      .optional()
+      .describe('021012 — employer deduction for non-qualified securities, ITA paragraph 110(1)(e).'),
+    foreignTaxCreditAdditions: z
+      .number()
+      .optional()
+      .describe(
+        '021017 — ITA section 110.5 / subparagraph 115(1)(a)(vii) additions for foreign tax ' +
+          'credits. Deducted, and carried forward to Schedule 12 line 082.',
+      ),
+    currentYearFarmLossAddBack: z
+      .number()
+      .optional()
+      .describe(
+        '021019 — "Add: Current year farm loss", the Part 1 ADD-BACK. Distinct from ' +
+          '`farmCurrentYearLoss` (line 077), which is the farm pool’s own continuity entry: ' +
+          'farm losses are tracked in their own pool, so Part 1 adds the amount back when ' +
+          'arriving at the NON-capital loss. Same figure in the ordinary case, different lines.',
+      ),
+
+    // ── Page 5, lines 200-240 — the RIFE continuity's own entries ────────────
+    //
+    // The pool the EIFEL regime restricts. Only the four `role: 'input'` boxes
+    // live here: 230 is carried in from federal Schedule 4 line 710, 320/330
+    // from federal Schedule 130, and 250/310/340/350 are derived.
+    //
+    // Also CAPTURED BUT NOT YET COMPUTED WITH — the engine has no RIFE
+    // calculation, so the form's rule that line 240 must not exceed line 350 is
+    // recorded on the field and enforced nowhere.
+    rifeClosingPreviousYear: z
+      .number()
+      .optional()
+      .describe('021200 — RIFE at the end of the previous tax year.'),
+    rifeTransferredOnAmalgamation: z
+      .number()
+      .optional()
+      .describe(
+        '021210 — RIFE transferred on an amalgamation or on the wind-up of a subsidiary corporation.',
+      ),
+    rifeAcquisitionOfControlAdjustment: z
+      .number()
+      .optional()
+      .describe('021220 — RIFE adjustment for an acquisition of control. DEDUCTED at line 310.'),
+    rifeDeductedForTaxYear: z
+      .number()
+      .optional()
+      .describe(
+        '021240 — RIFE deducted for the tax year, carried to Schedule 12 line 130. MUST NOT ' +
+          'exceed line 350 (the deductible ceiling), a cap the form states and nothing here ' +
+          'enforces yet. Same figure as `rifeDeducted` (line 002).',
+      ),
+
+    // Figures the form carries in from a FEDERAL schedule. Collected here
+    // because this engine has no federal EIFEL module to derive them from — the
+    // preparer transcribes them off the federal return, exactly as the form's
+    // own captions instruct. Contrast line 001, which comes from AT1 Schedule
+    // 12 and IS derivable in-system, so it is never entered.
+    rifeCurrentYear: z
+      .number()
+      .optional()
+      .describe(
+        '021230 — current-year restricted interest and financing expenses under ITA subsection ' +
+          '111(8). Federal Schedule 4, line 710.',
+      ),
+    excessCapacityForYear: z
+      .number()
+      .optional()
+      .describe("021320 — the corporation's excess capacity. Federal Schedule 130, line 129."),
+    receivedCapacityForYear: z
+      .number()
+      .optional()
+      .describe(
+        '021330 — total received capacity for the year. Federal Schedule 130, line 130.',
+      ),
+
     nonCapitalOpening: z.number().optional(),
     capitalOpening: z.number().optional(),
+    capitalCurrentYearLoss: z
+      .number()
+      .optional()
+      .describe(
+        '021057 — the capital pool’s current-year loss. The form carries this in from federal ' +
+          'Schedule 4 line 210, and this engine has no federal net-capital-loss figure to derive ' +
+          'it from, so the preparer transcribes it. Blank = nil.',
+      ),
     farmOpening: z.number().optional(),
     farmCurrentYearLoss: z.number().optional().describe(
       'Blank = same as federal. Unlike non-capital (whose current-year loss is derived ' +
@@ -1148,3 +1284,150 @@ export type SfedeCountrySuccessorRow = z.infer<typeof SfedeCountrySuccessorRow>;
 export type CfreCountryRegularRow = z.infer<typeof CfreCountryRegularRow>;
 export type CfreCountrySuccessorRow = z.infer<typeof CfreCountrySuccessorRow>;
 export type AlbertaResourceDeductions15Values = z.infer<typeof AlbertaResourceDeductions15Values>;
+
+/**
+ * AT1 Schedule 12 — the lines a preparer states, on a form that mostly derives.
+ *
+ * Schedule 12 reconciles a federal figure against an Alberta one, row by row.
+ * Which side of a row is entered follows the rule the whole AT1 editor uses:
+ *
+ *   · a line carried in from ANOTHER AT1 SCHEDULE is resolved from that
+ *     schedule and never entered — Alberta's CCA comes from Schedule 13, its
+ *     loss claims from Schedule 21, and re-entering them here would let the
+ *     return contradict the schedule it copies from. 20 lines, absent below.
+ *   · a line carried in from a FEDERAL return is entered. 36 lines.
+ *   · a line with no source at all is entered. 10 lines.
+ *   · totals and results are computed. 8 lines, absent below.
+ *
+ * ── One number, two places ──────────────────────────────────────────────────
+ *
+ * Area A's federal column cites Federal Schedule 1 lines this app already
+ * models (`T2SCH1` carries all 16 of them), and line 002 cites T2 line 300.
+ * Collecting them here means the same figure lives in two places and can
+ * disagree. That is a deliberate choice — the preparer transcribes the federal
+ * return as the form's own captions instruct — not an oversight. A diagnostic
+ * comparing the two is the natural follow-up.
+ */
+export const AlbertaReconciliation12Values = z
+  .object({
+    // ── Area A — federal column (Federal Schedule 1, unless noted) ──────────
+    netIncomeFederal: z.number().optional().describe('012002 — T2 line 300.'),
+    ccaFederal: z.number().optional().describe('012005 — Federal Schedule 1 line 403.'),
+    ccaRecaptureFederal: z.number().optional().describe('012007 — Federal Schedule 1 line 107.'),
+    terminalLossFederal: z.number().optional().describe('012009 — Federal Schedule 1 line 404.'),
+    farmingMandatoryCurrentFederal: z
+      .number()
+      .optional()
+      .describe('012015 — Federal Schedule 1 line 224.'),
+    farmingMandatoryPriorFederal: z
+      .number()
+      .optional()
+      .describe('012017 — Federal Schedule 1 line 309.'),
+    farmingOptionalCurrentFederal: z
+      .number()
+      .optional()
+      .describe('012019 — Federal Schedule 1 line 229.'),
+    farmingOptionalPriorFederal: z
+      .number()
+      .optional()
+      .describe('012021 — Federal Schedule 1 line 313.'),
+    depletionFederal: z.number().optional().describe('012023 — Federal Schedule 1 line 344.'),
+    ceeFederal: z.number().optional().describe('012027 — Federal Schedule 1 line 341.'),
+    cdeFederal: z.number().optional().describe('012029 — Federal Schedule 1 line 340.'),
+    foreignExplorationFederal: z
+      .number()
+      .optional()
+      .describe('012031 — Federal Schedule 1 line 345.'),
+    cogpeFederal: z.number().optional().describe('012033 — Federal Schedule 1 line 342.'),
+    sredFederal: z
+      .number()
+      .optional()
+      .describe('012035 — net: minus Federal Schedule 1 line 411, plus line 231.'),
+    taxReservesPriorFederal: z
+      .number()
+      .optional()
+      .describe('012037 — Federal Schedule 1 line 125.'),
+    taxReservesCurrentFederal: z
+      .number()
+      .optional()
+      .describe('012039 — Federal Schedule 1 line 413.'),
+    otherFederal: z
+      .number()
+      .optional()
+      .describe(
+        '012041 — Other. Fed Schedule 1 line 113 minus 406, plus other Additions, minus Fed ' +
+          'Schedule 21 Part 1 column D, minus Fed Schedule 1 line 218.',
+      ),
+
+    // ── Area A — Alberta column, the boxes with no schedule behind them ─────
+    farmingMandatoryCurrentAlberta: z.number().optional().describe('012014'),
+    farmingMandatoryPriorAlberta: z.number().optional().describe('012016'),
+    farmingOptionalCurrentAlberta: z.number().optional().describe('012018'),
+    farmingOptionalPriorAlberta: z.number().optional().describe('012020'),
+    otherAlberta: z
+      .number()
+      .optional()
+      .describe(
+        '012040 — Other. Schedule 18 line 076 + 094, plus Schedule 15 AREAs C/D/F/G/H, minus ' +
+          'the ACTA s.8(2.2) deduction, plus foreign affiliate property income after ITA ' +
+          's.152(6.1). An amount here requires the explanation at line 048.',
+      ),
+    capitalTaxOtherProvinces: z
+      .number()
+      .optional()
+      .describe('012042 — Alberta only; the form shades the federal side of this row.'),
+    otherExplanation: z
+      .string()
+      .optional()
+      .describe('012048 — required when line 040 carries an amount.'),
+
+    // ── Area B — federal column (T2 jacket) ─────────────────────────────────
+    charitableDonationsFederal: z.number().optional().describe('012057 — T2 line 311.'),
+    giftsFederal: z.number().optional().describe('012059 — T2 lines 312 + 313 + 314.'),
+    taxableDividendsFederal: z.number().optional().describe('012061 — T2 line 320.'),
+    partVI1Federal: z.number().optional().describe('012063 — T2 line 325.'),
+    nonCapitalLossesFederal: z.number().optional().describe('012065 — T2 line 331.'),
+    netCapitalLossesFederal: z.number().optional().describe('012067 — T2 line 332.'),
+    restrictedFarmLossesFederal: z.number().optional().describe('012069 — T2 line 333.'),
+    farmLossesFederal: z.number().optional().describe('012071 — T2 line 334.'),
+    limitedPartnershipLossesFederal: z.number().optional().describe('012073 — T2 line 335.'),
+    rifeFederal: z.number().optional().describe('012131 — T2 line 336.'),
+    centralCreditUnionFederal: z.number().optional().describe('012075 — T2 line 340.'),
+    prospectorSharesFederal: z.number().optional().describe('012079 — T2 line 350.'),
+    nonQualifiedSecuritiesFederal: z.number().optional().describe('012141 — T2 line 352.'),
+    section110AdditionsFederal: z
+      .number()
+      .optional()
+      .describe(
+        '012083 — ITA s.110.5 / 115(1)(a)(vii) additions. The form prints T2 line 335 here, the ' +
+          'same line it gives at 073; transcribed as printed.',
+      ),
+
+    // ── Area B — Alberta column, where the form points back at the T2 ───────
+    taxableDividendsAlberta: z.number().optional().describe('012060 — T2 line 320.'),
+    partVI1Alberta: z.number().optional().describe('012062 — T2 line 325.'),
+    centralCreditUnionAlberta: z.number().optional().describe('012074 — T2 line 340.'),
+    prospectorSharesAlberta: z.number().optional().describe('012078 — T2 line 350.'),
+    nonQualifiedSecuritiesAlberta: z.number().optional().describe('012140 — T2 line 352.'),
+
+    // ── Reconciliation of Active Business Income ────────────────────────────
+    abiDiffers: YesNo.optional().describe(
+      '012100 — does Alberta ABI differ from federal? An unanswered question is not "No"; the ' +
+        'rest of this block is completed only when the answer is Yes.',
+    ),
+    abiFederal: z
+      .number()
+      .optional()
+      .describe(
+        '012102 — federal Schedule 7 amount "Q", or federal Schedule 16 line 124. A negative ' +
+          'amount is shown in brackets.',
+      ),
+    abiAdjustment: z
+      .number()
+      .optional()
+      .describe(
+        '012104 — adjustment to ABI for Alberta purposes due to discretionary items. May be negative.',
+      ),
+  })
+  .meta({ id: 'AlbertaReconciliation12Values' });
+export type AlbertaReconciliation12Values = z.infer<typeof AlbertaReconciliation12Values>;
