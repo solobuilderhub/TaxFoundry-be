@@ -59,14 +59,59 @@
  *
  * ── 2026 ──────────────────────────────────────────────────────────────────
  *
- * NOT registered. Budget 2025 (2025-11-04) is the latest federal budget, and
- * Finance Canada now tables the budget in the fall with a fiscal update in the
- * spring — so Budget 2026 had not been tabled when this was written, and no
- * published 2026 rate table exists to certify against. Neither CRA's rates page
- * nor Budget 2025 announces a 2026 change to any figure the engine carries, but
- * "nothing announced yet" is not a published rate, and a year certified here on
- * that basis would file on an assumption. Add 2026 as a further entry below
- * once Budget 2026's tax measures are published.
+ * Registered, and identical to 2025 on every figure the engine carries. Each
+ * one was checked against a document published IN 2026, not inferred from
+ * silence — the distinction this module's earlier revision (correctly) refused
+ * to blur when no such document existed yet.
+ *
+ * Federal — verified 2026-09-08:
+ *   - No federal change for 2026 at all. CRA, "What's new for corporations",
+ *     page dated 2026-06-12, enumerates 2026 changes for British Columbia,
+ *     Newfoundland and Labrador, Nova Scotia, Ontario and Saskatchewan, and
+ *     lists none federally. Alberta appears nowhere in it either.
+ *   - Confirmed against the Spring Economic Update 2026, which announces no
+ *     change to the general rate, the small business deduction rate or the
+ *     business limit. Its corporate measures are an accelerated CCA for
+ *     low-carbon LNG facilities, a CCUS credit expansion, the employee
+ *     ownership trust exemption made permanent, and an SR&ED pre-claim
+ *     approval process from 2026-04-01 — none of which touches a rate in this
+ *     book. It announces no capital-gains inclusion-rate change, so ½ stands.
+ *   - Business limit $500,000, ground to nil straight-line over taxable
+ *     capital of $10,000,000 → $50,000,000 — T2 Corporation Income Tax Guide,
+ *     chapter 4, page dated 2026-05-28, quoted verbatim: "The business limit
+ *     is reduced on a straight-line basis for CCPCs that have taxable capital
+ *     employed in Canada of between $10 million and $50 million in the
+ *     previous year."
+ *   - SR&ED expenditure limit stays $6,000,000. The Budget 2025 increase runs
+ *     from tax years BEGINNING after 2024-12-15, and every tax year ending in
+ *     2026 began after that date, so 2026 has none of the straddle problem the
+ *     2025 note below describes. (CRA's own SR&ED ITC page also puts the
+ *     limit's taxable-capital phase-out at $15M → $75M from the same start
+ *     date. The engine still applies the limit as a flat figure and does not
+ *     model that phase-out — unchanged from 2025, and stated here so the gap
+ *     is not rediscovered as a surprise.)
+ *   - Zero-emission technology manufacturing stays 7.5% / 4.5%. The reduced
+ *     rates run in full for tax years beginning 2022 through 2031 and phase
+ *     out over tax years beginning 2032 to 2034 (ITA s.125.2), so 2026 is well
+ *     inside the full-rate window.
+ *
+ * Alberta — verified 2026-09-08: general 8%, small business 2%, small business
+ *   threshold $500,000, all effective since 2020-07-01 and still shown as
+ *   current, with no scheduled corporate change — alberta.ca, "Tax, levy, and
+ *   prescribed interest rates". The 2026 dates on that page belong to the
+ *   tourism levy (6%, from 2026-04-01) and the data centre levy (from
+ *   2026-01-01), neither of which is corporate income tax.
+ *
+ * Both years are therefore registered as the SAME frozen objects rather than
+ * as copies. `CORP_TAX_2026 === CORP_TAX_2025` is deliberate: if a 2026 figure
+ * is ever found to differ, the fix is a new object here, and an accidental
+ * divergence between two hand-copied tables cannot happen in the meantime.
+ *
+ * ── 2027 ──────────────────────────────────────────────────────────────────
+ *
+ * NOT registered, on exactly the reasoning that kept 2026 out until today: no
+ * 2027 rate table has been published. Register it from the documents, not from
+ * the absence of an announcement.
  */
 import {
   AB_TAX_2024,
@@ -83,8 +128,22 @@ export const CORP_TAX_2025: CorpTaxRates = Object.freeze({
 
 export const AB_TAX_2025: AlbertaTaxRates = AB_TAX_2024;
 
+/**
+ * 2026 carries every 2025 figure unchanged — see the "2026" section above for
+ * the document behind each one. Deliberately the same object, not a copy.
+ */
+export const CORP_TAX_2026: CorpTaxRates = CORP_TAX_2025;
+
+export const AB_TAX_2026: AlbertaTaxRates = AB_TAX_2025;
+
 /** Register every certified year onto the host books. Call once at boot. */
 export function registerRateYears(): void {
-  registerFederalRates([{ taxYear: 2025, rates: CORP_TAX_2025 }]);
-  registerAlbertaRates([{ taxYear: 2025, rates: AB_TAX_2025 }]);
+  registerFederalRates([
+    { taxYear: 2025, rates: CORP_TAX_2025 },
+    { taxYear: 2026, rates: CORP_TAX_2026 },
+  ]);
+  registerAlbertaRates([
+    { taxYear: 2025, rates: AB_TAX_2025 },
+    { taxYear: 2026, rates: AB_TAX_2026 },
+  ]);
 }

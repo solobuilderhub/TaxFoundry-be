@@ -1,6 +1,6 @@
 /**
  * The host certifies rate years the package does not ship. Without this, every
- * 2025 return is red-flagged RATE_YEAR_UNCERTIFIED and cannot be filed —
+ * 2025 AND 2026 return is red-flagged RATE_YEAR_UNCERTIFIED and cannot be filed —
  * `review-generator.service.ts` and `t2-cif.service.ts` both gate on
  * `hasExactRateYear(getFederalRateBook(), taxYear)`.
  */
@@ -52,9 +52,33 @@ describe('registerRateYears', () => {
     });
   });
 
-  it('does not certify 2026 — no primary source was available to verify it', () => {
+  it('certifies 2026 federally and for Alberta', () => {
+    // This test used to assert the OPPOSITE, and was right to: until 2026-09-08
+    // no 2026 rate table had been published, and a year certified on "nothing
+    // has been announced" would have filed on an assumption. It is registered
+    // now because documents published IN 2026 say so — CRA's "What's new for
+    // corporations" (2026-06-12) lists 2026 changes for five provinces and none
+    // federally, the Spring Economic Update 2026 announces no rate change, and
+    // Alberta still shows 8% / 2% / $500,000 as current.
     registerRateYears();
-    expect(hasExactRateYear(getFederalRateBook(), 2026)).toBe(false);
+    expect(hasExactRateYear(getFederalRateBook(), 2026)).toBe(true);
+    expect(hasExactRateYear(getAlbertaRateBook(), 2026)).toBe(true);
+  });
+
+  it('carries 2025 through to 2026 unchanged, on every figure', () => {
+    registerRateYears();
+    expect(resolveRates(getFederalRateBook(), 2026)).toEqual(CORP_TAX_2025);
+    expect(resolveRates(getAlbertaRateBook(), 2026)).toEqual(AB_TAX_2025);
+    // The SR&ED limit is cleaner in 2026 than in 2025: the $6M increase runs
+    // from tax years BEGINNING after 2024-12-15, and every year ending in 2026
+    // began after that date, so 2026 has none of 2025's straddle case.
+    expect(resolveRates(getFederalRateBook(), 2026).SRED_EXPENDITURE_LIMIT).toBe(6_000_000);
+  });
+
+  it('does not certify 2027 — the same rule that kept 2026 out until it was published', () => {
+    registerRateYears();
+    expect(hasExactRateYear(getFederalRateBook(), 2027)).toBe(false);
+    expect(hasExactRateYear(getAlbertaRateBook(), 2027)).toBe(false);
   });
 });
 
