@@ -137,7 +137,8 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
     };
     const donations = engineInput.schedules?.donations;
     expect(donations?.maximum).toBeDefined();
-    const combined = (donations?.charitable?.amountApplied ?? 0) + (donations?.gifts?.amountApplied ?? 0);
+    const combined =
+      (donations?.charitable?.amountApplied ?? 0) + (donations?.gifts?.amountApplied ?? 0);
     expect(combined).toBeLessThanOrEqual(donations!.maximum!.maximumDeduction);
   });
 
@@ -153,7 +154,7 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
     expect(engineInput.schedules?.donations?.gifts?.carryforward?.yearOfOrigin).toBeUndefined();
   });
 
-  it('lines 090-100 — carries the entered breakdown, defaulting charitable to its own pool\'s closing balance', () => {
+  it("lines 090-100 — carries the entered breakdown, defaulting charitable to its own pool's closing balance", () => {
     const riWithBreakdown = {
       ...riWithDivergence,
       alberta: { ...riWithDivergence.alberta },
@@ -287,9 +288,13 @@ describe('Schedule 10 — farm and the checkbox-selected "other loss" column', (
         farmCarrybacks: [{ taxYearEnd: '2023-12-31', amount: 15_000 }],
       },
     };
-    const engineInput = assembleProvincialInput('AT1', fed, riWithFarmCarryback, { isCcpc: true }) as {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithFarmCarryback, {
+      isCcpc: true,
+    }) as {
       schedules?: {
-        lossCarryback?: { farm?: { currentYearLoss: number; totalCarriedBack: number; remainingLoss: number } };
+        lossCarryback?: {
+          farm?: { currentYearLoss: number; totalCarriedBack: number; remainingLoss: number };
+        };
       };
     };
     const farm = engineInput.schedules?.lossCarryback?.farm;
@@ -311,7 +316,9 @@ describe('Schedule 10 — farm and the checkbox-selected "other loss" column', (
         otherLossCarrybacks: [{ taxYearEnd: '2023-12-31', amount: 10_000 }],
       },
     };
-    const engineInput = assembleProvincialInput('AT1', fed, riBothOtherLosses, { isCcpc: true }) as {
+    const engineInput = assembleProvincialInput('AT1', fed, riBothOtherLosses, {
+      isCcpc: true,
+    }) as {
       schedules?: {
         lossCarryback?: {
           otherLoss?: {
@@ -477,8 +484,8 @@ describe('runAT1Compute — Schedule 17 reserves take an Alberta override, per r
   });
 });
 
-describe('runAT1Compute — the nine previously-unmodeled schedules (3/4/5/6/7/8/9/11/15) reach the filed payload', () => {
-  const riNineSchedules = {
+describe('runAT1Compute — the previously-unmodeled schedules (3/4/15) reach the filed payload', () => {
+  const riLiveSchedules = {
     ...riWithDivergence,
     albertaOtherCredits3: {
       itcCertificatesIssued: 10_000,
@@ -487,65 +494,33 @@ describe('runAT1Compute — the nine previously-unmodeled schedules (3/4/5/6/7/8
     albertaForeignInvestment4: {
       countries: [{ country: 'US', netForeignInvestmentIncome: 20_000, fedForeignTaxPaid: 3_000 }],
     },
-    albertaRoyaltyDeduction5: {
-      crownChargesFromSchedule7: 15_000,
-      openingUnsuccessoredPoolBalance: 5_000,
-    },
-    albertaRoyaltyCredit6: {
-      albertaCrownRoyaltyIncurred: 12_000,
-    },
-    albertaRoyaltySupplemental7: {
-      eligibleCrownRoyalty: 15_000,
-    },
-    albertaPoliticalContributions8: {
-      contributions: [
-        { name: 'A Party', receiptNumber: 'R1', dateOfDonation: '2024-06-01', amount: 500 },
-      ],
-    },
-    albertaSredCredit9: {
-      federalQualifiedExpenditures: 100_000,
-      albertaPortionOfExpenditures: 60_000,
-    },
     albertaResourceDeductions15: {
       ceeRegular: { federalCurrentYearExpenses: 10_000, claimed: 2_000 },
     },
   };
 
-  it('files schedules 003, 004, 005, 006, 007, 008, 009 and 015 for a fact pattern that touches each', () => {
-    const engineInput = assembleProvincialInput('AT1', fed, riNineSchedules, { isCcpc: true });
+  it('files schedules 003, 004 and 015 for a fact pattern that touches each', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riLiveSchedules, { isCcpc: true });
     const out = runAT1Compute(engineInput);
     const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId).sort();
 
-    for (const id of ['003', '004', '005', '006', '007', '008', '009', '015']) {
+    for (const id of ['003', '004', '015']) {
       expect(filedIds).toContain(id);
     }
   });
 
-  it('files Schedule 9 page-3 lines 200/202/204 (longest-year CAN and tax-year dates) when a group is entered', () => {
-    const riWithSredGroup = {
-      ...riNineSchedules,
-      albertaSredCredit9: {
-        ...riNineSchedules.albertaSredCredit9,
-        longestYearCan: '1234567',
-        longestYearBegin: '2024-01-01',
-        longestYearEnd: '2024-12-31',
-        daysInLongestYear: 366,
-        group: [
-          { name: 'Claimant', albertaCan: '1234567', allocated: 2_000_000 },
-          { name: 'B Co', albertaCan: '7654321', allocated: 1_000_000 },
-        ],
-      },
-    };
-    const engineInput = assembleProvincialInput('AT1', fed, riWithSredGroup, { isCcpc: true });
+  it('cannot file the repealed schedules 005-009 at all', () => {
+    // Removed outright rather than left dormant: TRA does not publish these
+    // forms, its current AT1 has no line for any of them, and AuraTax (a
+    // TRA-certified preparer) offers the same 15 schedules this product does.
+    // See research/validation/auratax/2026-09-01-at1-schedules-5-11-missing-pdfs.
+    const engineInput = assembleProvincialInput('AT1', fed, riLiveSchedules, { isCcpc: true });
     const out = runAT1Compute(engineInput);
-    const sch9 = out.schedulePayloads?.find((s) => s.scheduleId === '009');
-    const byId = new Map(sch9?.values.map((v) => [v.lineItemId, v.value]) ?? []);
-    expect(byId.get('009200001')).toBe('1234567');
-    expect(byId.get('009202001')).toBe('2024-01-01');
-    expect(byId.get('009204001')).toBe('2024-12-31');
-    // Per-member allocation rows (220/230/240) still file too — the new
-    // longest-year fields are additive, not a replacement.
-    expect(byId.get('009220001')).toBe('Claimant');
+    const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId);
+
+    for (const id of ['005', '006', '007', '008', '009', '011', '014']) {
+      expect(filedIds).not.toContain(id);
+    }
   });
 
   it('omits all nine when their slices are absent, even with other AT1 schedules present', () => {
@@ -553,7 +528,7 @@ describe('runAT1Compute — the nine previously-unmodeled schedules (3/4/5/6/7/8
     const out = runAT1Compute(engineInput);
     const filedIds = (out.schedulePayloads ?? []).map((s) => s.scheduleId);
 
-    for (const id of ['003', '004', '005', '006', '007', '008', '009', '011', '015']) {
+    for (const id of ['003', '004', '015']) {
       expect(filedIds).not.toContain(id);
     }
     // The pre-existing fact pattern still files what it always did.

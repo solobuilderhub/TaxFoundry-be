@@ -510,6 +510,54 @@ function at1ClientIdentityFlags(
   ];
 }
 
+/**
+ * AT1 line 090 — the Net File specification and the printed form disagree, and
+ * this says so on any return where the disagreement changes the number.
+ *
+ * The engine files the PRINTED form's arithmetic:
+ *
+ *   090 = 080 − (129 + 082 + 085 + 086 + 115 + 087)
+ *
+ * §3.2.3.1's own line-090 rule instead nets the ELIMINATED Alberta SR&ED tax
+ * credit (081) and omits both the Innovation Employment Grant (129) and the
+ * Film and Television Tax Credit (115) — two credits the same document marks
+ * mandatory. Following it overstated the balance by the whole grant. The full
+ * evidence is on `AT1_BALANCE_CREDIT_LINES` in ca-tax's `at1/forms/jacket.ts`.
+ *
+ * AMBER, not red: the figure we file is the defensible one, so this must not
+ * block sign-off. But a preparer transmitting a return whose balance differs
+ * from the published formula should know before TRA tells them, not after —
+ * and if TRA's validator turns out to enforce its own documented rule, this
+ * flag is the breadcrumb that explains the rejection.
+ */
+export function at1BalanceFormulaFlags(
+  program: string,
+  fold: Record<string, unknown>,
+): { severity: Severity; code: string; message: string; resolved: boolean }[] {
+  if (program !== 'AT1') return [];
+  // The two formulas differ by exactly these two credits; nothing else moves.
+  const ieg = num(fold.innovationEmploymentGrant);
+  const fttc = num(fold.filmAndTelevisionTaxCredit);
+  const difference = ieg + fttc;
+  if (difference === 0) return [];
+
+  return [
+    {
+      severity: 'amber' as Severity,
+      code: 'AT1_BALANCE_FORMULA_CONFLICT',
+      message:
+        `Line 090 is struck as TRA's printed AT1 strikes it, netting the ` +
+        `Innovation Employment Grant${fttc > 0 ? ' and the Film and Television Tax Credit' : ''} ` +
+        `(${difference}). The Net File specification's own line-090 rule omits ` +
+        `${fttc > 0 ? 'both' : 'it'} and instead nets the Alberta SR&ED tax credit, which was ` +
+        'eliminated for expenditures after 2019-12-31. Filing the specification’s ' +
+        'version would overstate the balance by that amount. Reviewed and filed ' +
+        'per the printed form.',
+      resolved: false,
+    },
+  ];
+}
+
 export async function runReview(params: {
   engagementId: string;
   orgId: string;
@@ -597,6 +645,7 @@ export async function runReview(params: {
     // only learns of them when generating the payload has already filled in the
     // whole return. The renderer still refuses — this just says so earlier.
     ...at1ClientIdentityFlags(String(engagement.program), client),
+    ...at1BalanceFormulaFlags(String(engagement.program), fold),
   ];
 
   // Upsert the open (not signed-off) memo for this engagement.

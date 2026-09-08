@@ -55,8 +55,8 @@ import {
   type FederalT2Result,
   type IegAgreementInput,
   type LimitedPartnershipLossesResult,
-  reconcileAlbertaNetIncome,
   type RifeContinuityResult,
+  reconcileAlbertaNetIncome,
   type Schedule12FilingInput,
   type Schedule12Result,
   schedule12LossDeductions,
@@ -64,11 +64,6 @@ import {
 import type { ComposedFederalInput } from './assemble-t2-input.js';
 import { assembleSchedule3 } from './at1-schedule-composers/schedule-3-compose.js';
 import { assembleSchedule4 } from './at1-schedule-composers/schedule-4-compose.js';
-import { assembleSchedule5 } from './at1-schedule-composers/schedule-5-compose.js';
-import { assembleSchedule6 } from './at1-schedule-composers/schedule-6-compose.js';
-import { assembleSchedule7 } from './at1-schedule-composers/schedule-7-compose.js';
-import { assembleSchedule8 } from './at1-schedule-composers/schedule-8-compose.js';
-import { assembleSchedule9 } from './at1-schedule-composers/schedule-9-compose.js';
 import { assembleSchedule15 } from './at1-schedule-composers/schedule-15-compose.js';
 import type {
   AlbertaAssociatedCorpMember,
@@ -109,7 +104,9 @@ function divergenceFlags(ab: AlbertaValues) {
  */
 function albertaCcaOverrides(ri: Ri) {
   return (ri.cca?.classes ?? [])
-    .filter((c: CcaClass) => c?.ccaClass && (present(c.albertaOpeningUCC) || present(c.albertaClaim)))
+    .filter(
+      (c: CcaClass) => c?.ccaClass && (present(c.albertaOpeningUCC) || present(c.albertaClaim)),
+    )
     .map((c: CcaClass) => ({
       ccaClass: String(c.ccaClass),
       ...(present(c.albertaOpeningUCC) ? { openingUCC: num(c.albertaOpeningUCC) } : {}),
@@ -244,7 +241,9 @@ function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusi
   // filed alongside line 001. Re-entered by the preparer, not joined against
   // `sbd.associated` by array index — see this schedule's own doc comment.
   const agreementMembers = (ab.associatedCorpAgreement ?? [])
-    .filter((m: AlbertaAssociatedCorpMember) => m?.name || m?.albertaCan || m?.allocatedAmount != null)
+    .filter(
+      (m: AlbertaAssociatedCorpMember) => m?.name || m?.albertaCan || m?.allocatedAmount != null,
+    )
     .map((m: AlbertaAssociatedCorpMember) => ({
       name: m?.name,
       albertaCan: m?.albertaCan,
@@ -307,7 +306,10 @@ function scheduleTen(federal: FederalT2Result, ri: Ri) {
     : federal.losses.farm.currentYearLoss;
   const farm =
     farmCarrybackRows.length > 0
-      ? computeLossCarryback({ currentYearLoss: farmCurrentYearLoss, carrybacks: farmCarrybackRows })
+      ? computeLossCarryback({
+          currentYearLoss: farmCurrentYearLoss,
+          carrybacks: farmCarrybackRows,
+        })
       : undefined;
 
   const includesRestrictedFarm = yes(c.otherLossIncludesRestrictedFarm);
@@ -570,9 +572,7 @@ function scheduleTwentyOne(
       restrictedFarmCarriedBack !== undefined
         ? { ...federal.losses.restrictedFarm, carriedBack: restrictedFarmCarriedBack }
         : federal.losses.restrictedFarm,
-      present(c.restrictedFarmCurrentYearLoss)
-        ? num(c.restrictedFarmCurrentYearLoss)
-        : undefined,
+      present(c.restrictedFarmCurrentYearLoss) ? num(c.restrictedFarmCurrentYearLoss) : undefined,
       {
         applied: c.restrictedFarmApplied,
         expired: c.restrictedFarmExpired,
@@ -692,7 +692,9 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
       : {}),
     ...(present(d.deemedGiftGains) ? { deemedGiftGains: num(d.deemedGiftGains) } : {}),
     ...(present(d.recaptureOnGifts) ? { recaptureOnGifts: num(d.recaptureOnGifts) } : {}),
-    ...(present(d.proceedsNetOfOutlays) ? { proceedsNetOfOutlays: num(d.proceedsNetOfOutlays) } : {}),
+    ...(present(d.proceedsNetOfOutlays)
+      ? { proceedsNetOfOutlays: num(d.proceedsNetOfOutlays) }
+      : {}),
     ...(present(d.capitalCost) ? { capitalCost: num(d.capitalCost) } : {}),
   });
 
@@ -734,7 +736,9 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
         ...(present(d.carryforwardCulturalProperty)
           ? { culturalProperty: num(d.carryforwardCulturalProperty) }
           : {}),
-        ...(present(d.carryforwardEcologicalLand) ? { ecologicalLand: num(d.carryforwardEcologicalLand) } : {}),
+        ...(present(d.carryforwardEcologicalLand)
+          ? { ecologicalLand: num(d.carryforwardEcologicalLand) }
+          : {}),
         ...(present(d.carryforwardMedicine) ? { medicine: num(d.carryforwardMedicine) } : {}),
       }
     : undefined;
@@ -1205,11 +1209,6 @@ export function assembleAt1Schedules(
   // flags; each is filed whenever its own `ri.*` slice has real data.
   const otherDeductionsCredits = assembleSchedule3(ri);
   const foreignInvestmentTaxCredit = assembleSchedule4(ri);
-  const royaltyTaxDeduction = assembleSchedule5(ri);
-  const royaltyTaxCredit = assembleSchedule6(ri);
-  const royaltySupplemental = assembleSchedule7(ri);
-  const politicalContributions = assembleSchedule8(ri);
-  const sredTaxCredit9 = assembleSchedule9(ri);
   const resourceDeductions = assembleSchedule15(ri);
 
   // Schedule 12 needs 13/17/18's results AND the loss continuities' results —
@@ -1268,11 +1267,6 @@ export function assembleAt1Schedules(
     ...(smallBusinessDeduction ? { smallBusinessDeduction } : {}),
     ...(otherDeductionsCredits ? { otherDeductionsCredits } : {}),
     ...(foreignInvestmentTaxCredit ? { foreignInvestmentTaxCredit } : {}),
-    ...(royaltyTaxDeduction ? { royaltyTaxDeduction } : {}),
-    ...(royaltyTaxCredit ? { royaltyTaxCredit } : {}),
-    ...(royaltySupplemental ? { royaltySupplemental } : {}),
-    ...(politicalContributions ? { politicalContributions } : {}),
-    ...(sredTaxCredit9 ? { sredTaxCredit: sredTaxCredit9 } : {}),
     ...(lossCarryback ? { lossCarryback } : {}),
     // Schedule 12 is filed when at least one reconciling item exists. Most
     // of these (cca/reserves/dispositions/losses) are Area A pairs, omitted
