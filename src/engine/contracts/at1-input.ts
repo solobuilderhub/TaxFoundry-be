@@ -913,6 +913,132 @@ export const AlbertaForeignInvestment4Values = z
   })
   .meta({ id: 'AlbertaForeignInvestment4Values' });
 
+// ── AT1 Schedule 18 — Allowable Business Investment Loss entries (TRA §3.2.3.19) ──
+
+/**
+ * One small business corporation in AT1 Schedule 18's ABIL section
+ * (018082-018092) — a share or debt disposition that produced an allowable
+ * business investment loss, which s.39(1)(c) lets a corporation deduct
+ * against ANY income rather than only against capital gains.
+ *
+ * This has no federal equivalent modelled anywhere in this engine
+ * (`AlbertaSchedule18Input`'s own doc comment: "no federal ABIL schedule in
+ * this engine yet"), and it is not a category of the ordinary six-category
+ * disposition grid Schedule 18's Area A/B use — a name, an acquisition date
+ * and a shares-or-debt flag belong to it that no other disposition row
+ * carries. Without this, the whole ABIL section of Schedule 18 (lines
+ * 082-094) was uneterable from the UI: the composer built the six ordinary
+ * categories from federal `capitalDispositions`, and nothing populated
+ * `abilEntries` at all, so `AlbertaSchedule18Input.abilEntries` — real,
+ * tested code in ca-tax — could never be reached from a computed return.
+ */
+export const AlbertaAbilEntry = z
+  .object({
+    name: z.string().optional().describe('018082 — name of the small business corporation.'),
+    kind: z
+      .enum(['shares', 'debt'])
+      .optional()
+      .describe('018084 — specify: 1 = shares or 2 = debt.'),
+    dateOfAcquisition: z.string().optional().describe('018086 — date of acquisition (YYYY-MM-DD).'),
+    proceeds: z.number().optional().describe('018088 — A, proceeds of disposition.'),
+    acb: z.number().optional().describe('018090 — B, adjusted cost base.'),
+    outlays: z.number().optional().describe('018092 — C, outlays and expenses (re dispositions).'),
+  })
+  .meta({ id: 'AlbertaAbilEntry' });
+
+export const AlbertaSchedule18Values = z
+  .object({
+    abilEntries: z
+      .array(AlbertaAbilEntry)
+      .optional()
+      .describe(
+        'One row per small business corporation disposed of at a loss. 018094 (the allowable business investment loss, at the inclusion rate) is computed from these — not entered directly.',
+      ),
+  })
+  .meta({ id: 'AlbertaSchedule18Values' });
+
+// ── AT1 Schedule 12 — Area B items taken from the federal T2 (TRA §3.2.3.13) ──
+
+/**
+ * The Area B deductions and additions that AT1 Schedule 12 asks the preparer to
+ * copy off the federal T2, rather than deriving from an Alberta schedule.
+ *
+ * The form is explicit about where they come from: "If the opening balance or
+ * the claim for the current year for donations, gifts or losses are different
+ * for Alberta purposes than for federal purposes, complete the applicable
+ * Alberta schedule(s) and enter the amount from those schedule(s) below.
+ * **Otherwise, enter the amounts from the federal T2 for these items and any
+ * other applicable line items.**"
+ *
+ * Every one of these is marked mandatory in §3.2.3.13, and none had anywhere to
+ * live: this engine models no Alberta schedule for them and computes no federal
+ * equivalent either, so they were simply absent from the filed Schedule 12 —
+ * which both fails the specification's "all mandatory Field IDs must be output"
+ * rule and, worse, understated the Area B deduction total for any corporation
+ * that had one.
+ *
+ * They are collected rather than defaulted to zero on purpose. §3.2.3 does say
+ * a mandatory field "must default to zero" when its value cannot be determined
+ * — but a zero we chose because we never asked is a different statement from a
+ * zero the preparer entered, and only the second one is true. Asking makes the
+ * value determined, and then the zero is honest.
+ *
+ * Each is the FEDERAL amount, which Alberta takes too unless the corporation
+ * genuinely diverges; the optional `alberta*` override carries that case.
+ */
+export const AlbertaSchedule12Values = z
+  .object({
+    taxableDividendsDeductible: z
+      .number()
+      .optional()
+      .describe(
+        '012061 — taxable dividends deductible under ITA section 112 or 113, or subsection 138(6). Federal T2 line 320.',
+      ),
+    albertaTaxableDividendsDeductible: z
+      .number()
+      .optional()
+      .describe('012060 — Alberta override. Leave blank when it equals the federal amount.'),
+    centralCreditUnionAllocation: z
+      .number()
+      .optional()
+      .describe(
+        '012075 — taxable capital gains or taxable dividends allocated from a central credit union. Federal T2 line 340.',
+      ),
+    albertaCentralCreditUnionAllocation: z
+      .number()
+      .optional()
+      .describe('012074 — Alberta override. Leave blank when it equals the federal amount.'),
+    prospectorsShares: z
+      .number()
+      .optional()
+      .describe("012079 — prospector's and grubstaker's shares. Federal T2 line 350."),
+    albertaProspectorsShares: z
+      .number()
+      .optional()
+      .describe('012078 — Alberta override. Leave blank when it equals the federal amount.'),
+    nonQualifiedSecuritiesDeduction: z
+      .number()
+      .optional()
+      .describe('012141 — employer deduction for non-qualified securities. Federal T2 line 352.'),
+    albertaNonQualifiedSecuritiesDeduction: z
+      .number()
+      .optional()
+      .describe('012140 — Alberta override. Leave blank when it equals the federal amount.'),
+    section110_5Additions: z
+      .number()
+      .optional()
+      .describe(
+        '012083 — ITA section 110.5 and/or subparagraph 115(1)(a)(vii) additions. Federal T2 line 355. NOTE: the printed AT1 Schedule 12 annotates this "T2 line 335", which is a typo — 335 is limited partnership losses (this schedule’s 072/073) and is a deduction, not an addition. §3.2.3.13’s own rule says "must equal fed 200355", and CRA line 355 is the s.110.5 additions line.',
+      ),
+    albertaSection110_5Additions: z
+      .number()
+      .optional()
+      .describe(
+        '012082 — Alberta override, from AT1 Schedule 21 line 017. Leave blank when it equals the federal amount.',
+      ),
+  })
+  .meta({ id: 'AlbertaSchedule12Values' });
+
 // ── AT1 Schedule 15 — Alberta Resource Related Deductions (TRA §3.2.3.16) ──
 //
 // Every regular/successor pool side is its own top-level key on
@@ -1315,6 +1441,9 @@ export type AlbertaIegValues = z.infer<typeof AlbertaIegValues>;
 export type AlbertaOtherCredits3Values = z.infer<typeof AlbertaOtherCredits3Values>;
 export type ForeignInvestmentCountry4Row = z.infer<typeof ForeignInvestmentCountry4Row>;
 export type AlbertaForeignInvestment4Values = z.infer<typeof AlbertaForeignInvestment4Values>;
+export type AlbertaSchedule12Values = z.infer<typeof AlbertaSchedule12Values>;
+export type AlbertaAbilEntry = z.infer<typeof AlbertaAbilEntry>;
+export type AlbertaSchedule18Values = z.infer<typeof AlbertaSchedule18Values>;
 export type EdaRegularRow = z.infer<typeof EdaRegularRow>;
 export type EdaSuccessorRow = z.infer<typeof EdaSuccessorRow>;
 export type CmedbRow = z.infer<typeof CmedbRow>;

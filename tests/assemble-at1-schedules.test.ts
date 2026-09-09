@@ -256,6 +256,33 @@ describe('runAT1Compute — the filed payload carries the schedules, not just th
     expect(filedIds).toContain('021'); // loss continuity
   });
 
+  it('omits Schedule 12’s "Other" pair while Alberta and federal dispositions agree', () => {
+    // 040/041 are Area A lines, and Area A's rule is "if these amounts are the
+    // same, DO NOT indicate the amount for either". This composer builds
+    // Alberta's Schedule 18 from the SAME federal categories, so the two agree
+    // on an ordinary return and the pair is correctly absent.
+    //
+    // The wiring behind it is still real and matters: `filingInput.other` now
+    // carries `018076 + 018094` against `fed 001113 - 001406` per
+    // §3.2.3.13, so the moment the two diverge the disclosure — and the
+    // line 048 explanation TRA requires with it — goes out. Before this, the
+    // dispositions moved Alberta net income at 012054 with nothing on the
+    // filed schedule accounting for it, whether they diverged or not.
+    //
+    // One live gap this exposed, deliberately not closed here: `scheduleEighteen`
+    // never passes `abilEntries`, so an allowable business investment loss
+    // cannot reach Schedule 18 from this composer at all.
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const s12 = out.schedulePayloads?.find((s) => s.scheduleId === '012');
+    const ids = (s12?.values ?? []).map((v) => v.lineItemId);
+
+    expect(ids).toContain('012054001'); // the reconciled Alberta net income is filed
+    for (const f of ['012040', '012041', '012048']) {
+      expect(ids.some((id) => id.startsWith(f))).toBe(false);
+    }
+  });
+
   it('files NOTHING beyond the jacket when no AT1-only input is supplied at all', () => {
     const bareRi = {};
     const engineInput = assembleProvincialInput('AT1', fed, bareRi, { isCcpc: true });

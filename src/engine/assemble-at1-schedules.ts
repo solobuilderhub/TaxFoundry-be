@@ -183,10 +183,33 @@ function scheduleSeventeen(fed: Fed, ab: AlbertaValues) {
  * this schedule. ABIL / s.34.2 / donated-property / capital-gains-reserve
  * figures are not modelled on the federal side and are not wired here.
  */
-function scheduleEighteen(fed: Fed, ab: AlbertaValues) {
+function scheduleEighteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
   const dispositions = fed.capitalDispositions ?? [];
   const categorized = dispositions.filter((d) => d.category);
-  if (categorized.length === 0) return undefined;
+
+  // The ABIL section (018082-018094) has NO federal equivalent modelled
+  // anywhere in this engine, so it does not go through `federalCategories`
+  // the way the six ordinary disposition categories do — it is its own
+  // input, `ri.albertaSchedule18.abilEntries`. Filtered to rows that carry
+  // at least a name or a proceeds figure, matching the pattern every other
+  // array-of-rows collector in this file uses to drop a blank "add row".
+  const abilEntries = (ri.albertaSchedule18?.abilEntries ?? [])
+    .filter((e) => e?.name || e?.proceeds)
+    .map((e) => ({
+      name: e.name ?? '',
+      kind: (e.kind ?? 'shares') as 'shares' | 'debt',
+      ...(e.dateOfAcquisition ? { dateOfAcquisition: e.dateOfAcquisition } : {}),
+      proceeds: num(e.proceeds),
+      acb: num(e.acb),
+      outlays: num(e.outlays),
+    }));
+
+  // Previously: `if (categorized.length === 0) return undefined` — which
+  // meant a corporation with ONLY an ABIL to report (no ordinary category
+  // dispositions at all) never got a Schedule 18 in the first place, so its
+  // ABIL entries could never reach the wire regardless of this function's
+  // own `abilEntries` handling.
+  if (categorized.length === 0 && abilEntries.length === 0) return undefined;
 
   const federalCategories: Record<string, { proceeds: number; acb: number; outlays: number }> = {};
   for (const d of categorized) {
@@ -199,6 +222,7 @@ function scheduleEighteen(fed: Fed, ab: AlbertaValues) {
 
   const result = computeAlbertaSchedule18({
     federalCategories,
+    ...(abilEntries.length > 0 ? { abilEntries } : {}),
     ...divergenceFlags(ab),
   });
   return result.formPermitted ? result : undefined;
@@ -833,6 +857,46 @@ function resourceDeductionAdjustments(
   ];
 }
 
+/**
+ * The Area B pairs taken off the federal T2 — `undefined` for any the preparer
+ * left blank, so `alwaysPair` omits it rather than asserting a zero.
+ *
+ * Alberta takes the federal figure unless the corporation genuinely diverges,
+ * which is what each `alberta*` override is for. `??` rather than `||` on
+ * purpose: an explicit Alberta 0 against a non-zero federal amount is a real
+ * divergence to file, not a blank to fall back from.
+ */
+function areaBPairs(v: Ri['albertaSchedule12']): Partial<Schedule12FilingInput> {
+  if (!v) return {};
+  const pair = (federal?: number, alberta?: number) =>
+    federal === undefined && alberta === undefined
+      ? undefined
+      : { alberta: alberta ?? federal ?? 0, federal: federal ?? 0 };
+
+  const taxableDividendsDeductible = pair(
+    v.taxableDividendsDeductible,
+    v.albertaTaxableDividendsDeductible,
+  );
+  const centralCreditUnion = pair(
+    v.centralCreditUnionAllocation,
+    v.albertaCentralCreditUnionAllocation,
+  );
+  const prospectorsShares = pair(v.prospectorsShares, v.albertaProspectorsShares);
+  const nonQualifiedSecurities = pair(
+    v.nonQualifiedSecuritiesDeduction,
+    v.albertaNonQualifiedSecuritiesDeduction,
+  );
+  const section110_5Additions = pair(v.section110_5Additions, v.albertaSection110_5Additions);
+
+  return {
+    ...(taxableDividendsDeductible ? { taxableDividendsDeductible } : {}),
+    ...(centralCreditUnion ? { centralCreditUnion } : {}),
+    ...(prospectorsShares ? { prospectorsShares } : {}),
+    ...(nonQualifiedSecurities ? { nonQualifiedSecurities } : {}),
+    ...(section110_5Additions ? { section110_5Additions } : {}),
+  };
+}
+
 function scheduleTwelve(
   federal: FederalT2Result,
   cca: ReturnType<typeof scheduleThirteen>,
@@ -854,6 +918,13 @@ function scheduleTwelve(
   culturalEcologicalGiftsFederal: number,
   // Area A, lines 022/023, 026-033 — AT1 Schedule 15 vs federal Schedule 12.
   resourceDeductions: ReturnType<typeof assembleSchedule15> | undefined,
+  // Area B, lines 090/091 — the taxable income this return was actually
+  // computed on. Passed rather than left to the builder's own sum of the
+  // deduction lines: that sum is only as complete as the Division C items this
+  // engine models, and 090 feeds AT1 page 2 line 062.
+  albertaTaxableIncome: number,
+  // Area B, the items the form asks the preparer to copy off the federal T2.
+  areaB: Ri['albertaSchedule12'],
 ): {
   result: Schedule12Result;
   filingInput: Schedule12FilingInput;
@@ -933,9 +1004,43 @@ function scheduleTwelve(
     },
   };
 
+  /**
+   * Schedule 12 line 040/041 — the "Other" pair, and the Schedule 18 component
+   * of it.
+   *
+   * `dispositions` already feeds `adjustments` above, so the Alberta net income
+   * at line 054 has always been right. What was missing is the DISCLOSURE: no
+   * line on the filed Schedule 12 accounted for the adjustment, so TRA received
+   * a reconciliation whose total did not follow from its own visible parts.
+   * Exactly the defect already fixed twice on the jacket (lines 087 and 115).
+   *
+   * §3.2.3.13 states both sides verbatim: 040 "must include as an addition:
+   * 018076 + 018094", and 041 takes "fed 001113 minus 001406" — federal
+   * Schedule 1's taxable capital gains from Schedule 6, less its allowable
+   * business investment loss from Schedule 6. The ABIL reaches us NEGATIVE
+   * (`albertaAbilDifference`: "the inputs arrive negative per the form") while
+   * the federal deduction line is positive, so both expressions net the loss
+   * out of the gain despite reading differently.
+   *
+   * NOT included: the Schedule 15 component. The same rule requires Areas C, D,
+   * F, G and H to be added to 040 where a computation comes out negative,
+   * entered as a positive amount. That is a separate piece of work, named here
+   * rather than silently skipped — a return with resource pools files an
+   * incomplete 040 until it is done.
+   */
+  const dispositionsOther = dispositions
+    ? {
+        alberta: dispositions.taxableCapitalGain + dispositions.allowableBusinessInvestmentLoss,
+        federal: federal.capitalGains?.taxableCapitalGain ?? 0,
+        explanation:
+          'AT1 Schedule 18: taxable capital gain (line 076) and allowable business investment loss (line 094).',
+      }
+    : undefined;
+
   const filingInput = {
     federalNetIncomeForTax: federal.netIncomeForTax,
     albertaNetIncomeForTax: result.albertaNetIncomeForTax,
+    ...(dispositionsOther ? { other: dispositionsOther } : {}),
     ...(cca
       ? {
           cca: { alberta: cca.albertaTotalCca, federal: cca.federalTotalCca },
@@ -986,6 +1091,24 @@ function scheduleTwelve(
         }
       : {}),
     lossDeductions,
+    // 062/063 — Part VI.1 tax deduction, federal T2 line 325 on both sides.
+    // The engine computes it; Alberta has no separate election, so the two
+    // agree and `alwaysPair` files both (Area B transmits regardless).
+    partVI1Deduction: {
+      alberta: federal.partVI1Deduction?.deduction ?? 0,
+      federal: federal.partVI1Deduction?.deduction ?? 0,
+    },
+    // The five Area B pairs neither engine computes. The form's own
+    // instruction is to copy them off the federal T2, so they are COLLECTED
+    // (`ri.albertaSchedule12`) rather than defaulted to zero: §3.2.3 does say a
+    // mandatory field defaults to zero when its value cannot be determined, but
+    // a zero nobody was asked for is a different statement from one the
+    // preparer entered, and only the second is true. Asking makes it
+    // determined. Each pair is filed as a pair whenever the preparer has
+    // supplied anything for it, Alberta defaulting to the federal figure unless
+    // overridden.
+    ...areaBPairs(areaB),
+    taxableIncome: { alberta: albertaTaxableIncome, federal: federal.taxableIncome },
     // 012130/131 — same "omit when this composer has no data at all" shape
     // as donations below. The federal side is T2 jacket line 336
     // ("Restricted interest and financing expenses from Schedule 4"), which
@@ -1200,7 +1323,7 @@ export function assembleAt1Schedules(
 
   const cca = scheduleThirteen(fed, ab, ri);
   const reserves = scheduleSeventeen(fed, ab);
-  const dispositions = scheduleEighteen(fed, ab);
+  const dispositions = scheduleEighteen(fed, ab, ri);
   const lossCarryback = scheduleTen(federal, ri);
   const smallBusinessDeduction = scheduleOne(fed, ri, albertaTaxableIncome, defaultBusinessLimit);
 
@@ -1231,6 +1354,8 @@ export function assembleAt1Schedules(
     undefined,
     0,
     resourceDeductions,
+    albertaTaxableIncome,
+    ri.albertaSchedule12,
   );
 
   const losses = scheduleTwentyOne(
@@ -1261,7 +1386,23 @@ export function assembleAt1Schedules(
     donations,
     fed.culturalEcologicalGifts ?? 0,
     resourceDeductions,
+    albertaTaxableIncome,
+    ri.albertaSchedule12,
   );
+
+  // Area B items the preparer entered directly (`ri.albertaSchedule12`) —
+  // taxable dividends deductible, the central credit union allocation,
+  // prospector's shares, the non-qualified-securities deduction, s.110.5
+  // additions. Same shape of exception `donations` already is, below: these
+  // are mandatory-disclosure Area B lines that populate whenever the
+  // preparer supplied real data, whether or not anything else on the return
+  // diverges from federal — a preparer who entered ONLY one of these (say,
+  // a central credit union allocation, with no CCA/reserve/disposition/loss/
+  // donation divergence at all) must still see Schedule 12 filed, because
+  // that entry IS the divergence the form exists to disclose.
+  const hasAreaBInput =
+    ri.albertaSchedule12 !== undefined &&
+    Object.values(ri.albertaSchedule12).some((v) => v !== undefined);
 
   const schedules: AlbertaReturnInput['schedules'] = {
     ...(smallBusinessDeduction ? { smallBusinessDeduction } : {}),
@@ -1271,14 +1412,25 @@ export function assembleAt1Schedules(
     // Schedule 12 is filed when at least one reconciling item exists. Most
     // of these (cca/reserves/dispositions/losses) are Area A pairs, omitted
     // when Alberta agrees with federal — genuinely "nothing to disclose".
-    // `donations` is different: Area B's 056-059 are mandatory-disclosure,
-    // always-both-sides lines (see `Schedule12FilingInput.donations`'s own
-    // doc comment) that populate whenever real donation/gift activity
-    // exists AT ALL, whether or not Alberta diverges from federal — so it
-    // belongs in this gate too, or a donations-only return never produces a
-    // Schedule 12 payload despite `reconciliation.donations` genuinely
-    // having data.
-    ...(cca || reserves || dispositions || losses || donations || resourceDeductions
+    // `donations` and `hasAreaBInput` are different: Area B's mandatory-
+    // disclosure lines populate whenever real activity exists AT ALL,
+    // whether or not Alberta diverges from federal — see
+    // `Schedule12FilingInput.donations`'s own doc comment for the donations
+    // half of this. Without `hasAreaBInput` here, a return whose ONLY
+    // Alberta-specific fact was one of the five `ri.albertaSchedule12`
+    // items computed the mandatory 050/090/091/054 lines but never filed
+    // them: `reconciliation` itself was omitted from `schedules`, so
+    // ca-tax's engine received no Schedule 12 input to build a payload
+    // from. Caught by driving a real AT1 return through Compute and
+    // checking the actual persisted `schedulePayloads`, not by a unit test
+    // that only calls the builder function directly.
+    ...(cca ||
+    reserves ||
+    dispositions ||
+    losses ||
+    donations ||
+    resourceDeductions ||
+    hasAreaBInput
       ? { reconciliation }
       : {}),
     ...(cca ? { cca } : {}),

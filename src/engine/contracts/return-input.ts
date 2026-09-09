@@ -36,6 +36,8 @@ import {
   AlbertaOtherCredits3Values,
   AlbertaResourceDeductions15Values,
   AlbertaSbdValues,
+  AlbertaSchedule12Values,
+  AlbertaSchedule18Values,
   AlbertaValues,
 } from './at1-input.js';
 import { QuebecValues } from './co17-input.js';
@@ -96,6 +98,8 @@ export const ReturnInputSchema = z
     albertaIeg: AlbertaIegValues.optional(),
     albertaOtherCredits3: AlbertaOtherCredits3Values.optional(),
     albertaForeignInvestment4: AlbertaForeignInvestment4Values.optional(),
+    albertaSchedule12: AlbertaSchedule12Values.optional(),
+    albertaSchedule18: AlbertaSchedule18Values.optional(),
     albertaResourceDeductions15: AlbertaResourceDeductions15Values.optional(),
   })
   .meta({ id: 'ReturnInput' })
