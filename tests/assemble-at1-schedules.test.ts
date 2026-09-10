@@ -449,8 +449,15 @@ describe("Schedule 21 — the Alberta opening balance survives, not federal's", 
 
     // Federal current-year loss: 10,000 (no CCA claimed). Alberta: 10,000 +
     // 15,000 (the class-13 claim only Alberta takes) = 25,000.
-    expect(topLevel?.value).toBe(25_000);
+    //
+    // "Agrees" means what §3.2.3.21 says it means: 037 = 021 × (−1). Line 021
+    // "must be less than or equal to zero" and 037 has a `+` sign column, so
+    // the same loss is −25,000 on one and 25,000 on the other. This used to
+    // assert 25,000 on BOTH — which is the sign bug itself, written down as
+    // the expected behaviour.
+    expect(topLevel?.value).toBe(-25_000);
     expect(continuityRow?.value).toBe(25_000); // NOT federal's 10,000
+    expect(continuityRow?.value).toBe(-(topLevel?.value as number));
   });
 });
 

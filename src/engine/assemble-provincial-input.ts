@@ -21,7 +21,7 @@ import {
   SINGLE_JURISDICTION_ALBERTA_FACTOR,
 } from '@classytic/ca-tax/t2';
 import type { ComposedFederalInput } from './assemble-t2-input.js';
-import { assembleAt1Schedules } from './assemble-at1-schedules.js';
+import { albertaSbdFacts, assembleAt1Schedules } from './assemble-at1-schedules.js';
 import type { ReturnInput } from './return-input-contract.js';
 
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v) || 0);
@@ -96,10 +96,18 @@ export function assembleProvincialInput(
       rates.BUSINESS_LIMIT,
     );
 
+    // The SAME eligibility facts Schedule 1 is filed from. Without them the
+    // engine's own `computeAlbertaSbd` sees no status and defaults to eligible,
+    // so a non-CCPC got the small-business rate on the jacket while its
+    // Schedule 1 correctly reported no claim — $18,000 of understated Alberta
+    // tax on $300,000 of income. Passed from one place so the two cannot drift.
+    const sbdFacts = albertaSbdFacts(fed, ri);
+
     return {
       period,
       federalTaxableIncome,
       activeBusinessIncome,
+      ...(sbdFacts ?? {}),
       ...(allocation ? { allocation } : {}),
       ...(schedules && Object.keys(schedules).length > 0 ? { schedules } : {}),
       ...(ieg ? { ieg } : {}),

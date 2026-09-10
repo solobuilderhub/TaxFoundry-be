@@ -1,0 +1,20 @@
+{
+  "scenario": "AB5-non-ccpc",
+  "title": "AT1 for a non-CCPC — no Alberta small-business deduction",
+  "program": "AT1",
+  "lines": {
+    "001:001003001": 300000,
+    "001:001007001": 300000,
+    "001:001009001": 300000,
+    "001:001013001": 300000,
+    "field:albertaSbdIncome": 0,
+    "field:albertaSmallBusinessDeduction": 0,
+    "field:albertaTaxPayable": 24000,
+    "field:albertaTaxableIncome": 300000,
+    "field:allocationFactor": 1,
+    "field:basicAlbertaTax": 24000,
+    "field:innovationEmploymentGrant": 0,
+    "field:totalOwing": 2400000,
+    "issue:0": "Alberta SBD: only a CCPC, or an Alberta co-operative or credit union, may claim the small business deduction."
+  }
+}

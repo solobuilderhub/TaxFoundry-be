@@ -36,7 +36,7 @@
 import {
   type AlbertaReturnInput,
   albertaCcaScheduleAdjustments,
-  albertaCurrentYearLoss,
+  computeCurrentYearNonCapitalLoss,
   albertaDispositionAdjustments,
   albertaReserveDifference,
   albertaResourceDeductionDifference,
@@ -231,13 +231,27 @@ function scheduleEighteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
 // ── Schedule 1 — small business deduction ────────────────────────────────
 
 /**
- * Filed as SUPPORTING DISCLOSURE — the actual Alberta tax rate reduction is
- * computed independently by `computeAlbertaTax` (which this composer does not
- * touch). This schedule reconciles the eligibility test and reports the
- * income that attracts the small-business rate; it does not itself change
- * what tax is payable.
+ * The Alberta small-business eligibility facts, in ONE place.
+ *
+ * `computeAlbertaTax` runs its own `computeAlbertaSbd` to decide how much income
+ * attracts the small-business rate, and this module runs another to file
+ * Schedule 1. Both must be given the same facts or the jacket and its supporting
+ * schedule disagree — which is exactly what happened: `corporationStatus` was
+ * passed here and NOT onto the AT1 engine input, so a non-CCPC's Schedule 1
+ * correctly reported no claim while the jacket quietly granted one. On $300,000
+ * of income that understated Alberta tax by $18,000 ($6,000 payable instead of
+ * $24,000) and the engine printed "only a CCPC … may claim the small business
+ * deduction" in the same breath.
+ *
+ * Returning the facts from here rather than deriving them twice is what stops
+ * the two computations drifting apart again.
+ *
+ * `undefined` means the eligibility question is unanswered, which is not the
+ * same as answering "not eligible": Schedule 1 is then not filed at all, and the
+ * jacket keeps the engine's own default. A return cannot be transmitted without
+ * the mandatory jacket answers regardless.
  */
-function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusinessLimit: number) {
+export function albertaSbdFacts(fed: Fed, ri: Ri) {
   const ab: AlbertaSbdValues = ri.albertaSbd ?? {};
   if (!ab.corporationStatus) return undefined; // no eligibility answer ⇒ nothing to claim
   const sbd = ri.sbd ?? {};
@@ -246,20 +260,30 @@ function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusi
   // corporation is associated with for SBD purposes does not change by
   // jurisdiction.
   const isAssociated = (sbd.associated ?? []).some((m) => m?.name || m?.allocatedLimit);
+  return {
+    activeBusinessIncome: num(fed.activeBusinessIncome),
+    status: ab.corporationStatus,
+    ...(ab.wasCcpcThroughoutYear === 'no' ? { wasCcpcThroughoutYear: false } : {}),
+    ...(isAssociated ? { isAssociated: true } : {}),
+    ...(isAssociated && sbd.businessLimit != null
+      ? { allocatedBusinessLimit: num(sbd.businessLimit) }
+      : {}),
+  };
+}
 
-  const result = computeAlbertaSbd(
-    {
-      albertaTaxableIncome,
-      activeBusinessIncome: num(fed.activeBusinessIncome),
-      status: ab.corporationStatus,
-      wasCcpcThroughoutYear: ab.wasCcpcThroughoutYear === 'no' ? false : undefined,
-      ...(isAssociated ? { isAssociated: true } : {}),
-      ...(isAssociated && sbd.businessLimit != null
-        ? { allocatedBusinessLimit: num(sbd.businessLimit) }
-        : {}),
-    },
-    defaultBusinessLimit,
-  );
+/**
+ * Filed as SUPPORTING DISCLOSURE — the actual Alberta tax rate reduction is
+ * computed independently by `computeAlbertaTax` (which this composer does not
+ * touch). This schedule reconciles the eligibility test and reports the
+ * income that attracts the small-business rate; it does not itself change
+ * what tax is payable.
+ */
+function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusinessLimit: number) {
+  const ab: AlbertaSbdValues = ri.albertaSbd ?? {};
+  const facts = albertaSbdFacts(fed, ri);
+  if (!facts) return undefined;
+
+  const result = computeAlbertaSbd({ albertaTaxableIncome, ...facts }, defaultBusinessLimit);
 
   // Area A — the associated group's own allocation table (041/043/045),
   // filed alongside line 001. Re-entered by the preparer, not joined against
@@ -463,7 +487,7 @@ function scheduleTwentyOne(
     // exists — the continuity table's "current year loss" row must agree with
     // whatever Schedule 21 line 021 states, or the schedule contradicts itself
     // on the same fact. Non-capital's is computed automatically
-    // (`albertaCurrentYearLoss`, from Schedule 12's reconciliation);
+    // (Part 1, `computeCurrentYearNonCapitalLoss`, below);
     // farm/restricted-farm take a direct AT1-only entry instead, since no
     // federal input breaks a loss down by farm activity for anything to
     // derive it from; capital has none — see pool-specific notes below.
@@ -491,12 +515,119 @@ function scheduleTwentyOne(
       otherAdjustments: num(poolInput?.otherAdjustments),
     });
 
-  const currentYearNonCapitalLoss = albertaCurrentYearLoss(schedule12);
+  // The capital, farm and RIFE continuities are computed FIRST: Schedule 21
+  // Part 1 reads line 061 (capital, × inclusion rate → 003), line 240 (RIFE →
+  // 002) and the farm pool's current-year loss (019), and the non-capital
+  // continuity below then carries Part 1's result into its line 037. None of
+  // the three depends on Part 1, so there is no cycle — only an order.
+  // The net capital loss for the year is confirmed the SAME as federal by
+  // TRA's own Fall 2026 test case text ("the current year net capital loss
+  // should be the same as federal") — reusing federal's figure here is
+  // correct, not a shortcut. `carriedBack` is NOT reused from federal,
+  // though: federal has no net-capital carry-back request at all (always
+  // 0), so it is overridden with Schedule 10's Alberta-only capital column
+  // total whenever one was actually requested — see `capitalCarriedBack`'s
+  // doc comment above.
+  const capital = carryForward(
+    num(c.capitalOpening),
+    capitalCarriedBack !== undefined
+      ? { ...federal.losses.netCapital, carriedBack: capitalCarriedBack }
+      : federal.losses.netCapital,
+    undefined,
+    {
+      applied: c.capitalApplied,
+      expired: c.capitalExpired,
+      windUpTransfer: c.capitalWindUpTransfer,
+      section80Adjustment: c.capitalSection80Adjustment,
+      otherAdjustments: c.capitalOtherAdjustments,
+    },
+  );
+
+  // Farm / restricted-farm's CURRENT-YEAR LOSS AMOUNT defaults to federal's
+  // but, like non-capital, is overridable — no federal input in this engine
+  // breaks a loss down by farm activity, so unlike non-capital (Part 1 below) this can only be a direct AT1-only entry.
+  const farm = carryForward(
+    num(c.farmOpening),
+    farmCarriedBack !== undefined
+      ? { ...federal.losses.farm, carriedBack: farmCarriedBack }
+      : federal.losses.farm,
+    present(c.farmCurrentYearLoss) ? num(c.farmCurrentYearLoss) : undefined,
+    {
+      applied: c.farmApplied,
+      expired: c.farmExpired,
+      windUpTransfer: c.farmWindUpTransfer,
+      section80Adjustment: c.farmSection80Adjustment,
+      otherAdjustments: c.farmOtherAdjustments,
+    },
+  );
+
+  const restrictedFarm = carryForward(
+    num(c.restrictedFarmOpening),
+    restrictedFarmCarriedBack !== undefined
+      ? { ...federal.losses.restrictedFarm, carriedBack: restrictedFarmCarriedBack }
+      : federal.losses.restrictedFarm,
+    present(c.restrictedFarmCurrentYearLoss) ? num(c.restrictedFarmCurrentYearLoss) : undefined,
+    {
+      applied: c.restrictedFarmApplied,
+      expired: c.restrictedFarmExpired,
+      windUpTransfer: c.restrictedFarmWindUpTransfer,
+      section80Adjustment: c.restrictedFarmSection80Adjustment,
+      otherAdjustments: c.restrictedFarmOtherAdjustments,
+    },
+  );
+
+  // The NINTH section (page 5) — RIFE. Not part of the NetFile schema (see
+  // `computeRifeContinuity`'s own doc comment) — kept so Schedule 12 line 130
+  // and Schedule 21 line 002 can both read `.deducted`. Gated on real RIFE,
+  // not on the federal block merely existing: excess capacity on its own is
+  // not RIFE. Three of its lines default to federal Schedule 130's own
+  // figures (230, 320, 330), overridden only where Alberta diverges.
+  const rife =
+    c.rife ||
+    (federal.eifelCapacity?.rifeForYear ?? 0) > 0 ||
+    (federal.eifelCapacity?.rifeDeductible ?? 0) > 0
+      ? computeRifeContinuity({
+          openingBalance: num(c.rife?.openingBalance),
+          transferredOnWindUp: num(c.rife?.transferredOnWindUp),
+          acquisitionOfControlAdjustment: num(c.rife?.acquisitionOfControlAdjustment),
+          currentYearRife: present(c.rife?.currentYearRife)
+            ? num(c.rife?.currentYearRife)
+            : (federal.eifelCapacity?.rifeForYear ?? 0),
+          excessCapacity: present(c.rife?.excessCapacity)
+            ? num(c.rife?.excessCapacity)
+            : (federal.eifelCapacity?.excessCapacityBeforeRife ?? 0),
+          receivedCapacity: present(c.rife?.receivedCapacity)
+            ? num(c.rife?.receivedCapacity)
+            : (federal.eifelCapacity?.receivedCapacity ?? 0),
+          ...(present(c.rife?.deductedClaim) ? { deductedClaim: num(c.rife?.deductedClaim) } : {}),
+        })
+      : undefined;
+
+  // Part 1 — the calculation of the current-year non-capital loss. Replaces
+  // `albertaCurrentYearLoss(schedule12)`, which was `max(0, −net income)` and
+  // ignored every Division C deduction §3.2.3.21 subtracts. Each deduction is
+  // the figure the specification names, resolved by `federalDivisionC` — the
+  // same resolver Schedule 12 reads, so the two schedules cannot disagree.
+  const t2 = federalDivisionC(federal, ri.albertaSchedule12);
+  const currentYearLoss = computeCurrentYearNonCapitalLoss({
+    netIncome: schedule12.albertaNetIncomeForTax,
+    ...(rife ? { rifeDeducted: rife.deducted } : {}),
+    capitalLossApplied: capital.appliedCurrentYear,
+    ...(t2.line320 !== undefined ? { taxableDividendsDeductible: t2.line320 } : {}),
+    ...(t2.line325 !== undefined ? { partVI1TaxDeductible: t2.line325 } : {}),
+    ...(t2.line350 !== undefined ? { prospectorsShares: t2.line350 } : {}),
+    ...(t2.line352 !== undefined ? { nonQualifiedSecurities: t2.line352 } : {}),
+    ...(t2.albertaSection110_5Additions !== undefined
+      ? { section110_5Additions: t2.albertaSection110_5Additions }
+      : {}),
+    ...(t2.line355 !== undefined ? { federalSection110_5Additions: t2.line355 } : {}),
+    farmLoss: farm.currentYearLoss,
+  });
 
   const nonCapital = carryForward(
     num(c.nonCapitalOpening),
     federal.losses.nonCapital,
-    currentYearNonCapitalLoss,
+    currentYearLoss.currentYearLoss,
     {
       applied: c.nonCapitalApplied,
       expired: c.nonCapitalExpired,
@@ -514,7 +645,7 @@ function scheduleTwentyOne(
   // as every other opening balance on this schedule.
   const nonCapitalVintages = Array.isArray(c.nonCapitalVintages) ? c.nonCapitalVintages : [];
   const nonCapitalByYearOfOrigin = computeNonCapitalLossByYearOfOrigin({
-    currentYearLoss: currentYearNonCapitalLoss,
+    currentYearLoss: currentYearLoss.currentYearLoss,
     currentYearCarriedBack: nonCapital.carriedBack,
     priorVintages: nonCapitalVintages
       .filter((v) => present(v?.yearsAgo))
@@ -547,64 +678,14 @@ function scheduleTwentyOne(
       : undefined;
 
   return {
-    currentYearNonCapitalLoss,
+    currentYearLoss,
     nonCapital,
+    capital,
+    farm,
+    restrictedFarm,
+    ...(rife ? { rife } : {}),
     nonCapitalByYearOfOrigin,
     ...(otherLossesByYearOfOrigin ? { otherLossesByYearOfOrigin } : {}),
-    // The net capital loss for the year is confirmed the SAME as federal by
-    // TRA's own Fall 2026 test case text ("the current year net capital loss
-    // should be the same as federal") — reusing federal's figure here is
-    // correct, not a shortcut. `carriedBack` is NOT reused from federal,
-    // though: federal has no net-capital carry-back request at all (always
-    // 0), so it is overridden with Schedule 10's Alberta-only capital column
-    // total whenever one was actually requested — see `capitalCarriedBack`'s
-    // doc comment above.
-    capital: carryForward(
-      num(c.capitalOpening),
-      capitalCarriedBack !== undefined
-        ? { ...federal.losses.netCapital, carriedBack: capitalCarriedBack }
-        : federal.losses.netCapital,
-      undefined,
-      {
-        applied: c.capitalApplied,
-        expired: c.capitalExpired,
-        windUpTransfer: c.capitalWindUpTransfer,
-        section80Adjustment: c.capitalSection80Adjustment,
-        otherAdjustments: c.capitalOtherAdjustments,
-      },
-    ),
-    // Farm / restricted-farm's CURRENT-YEAR LOSS AMOUNT defaults to federal's
-    // but, like non-capital, is overridable — no federal input in this engine
-    // breaks a loss down by farm activity, so unlike non-capital (derived from
-    // Schedule 12's reconciliation) this can only be a direct AT1-only entry.
-    farm: carryForward(
-      num(c.farmOpening),
-      farmCarriedBack !== undefined
-        ? { ...federal.losses.farm, carriedBack: farmCarriedBack }
-        : federal.losses.farm,
-      present(c.farmCurrentYearLoss) ? num(c.farmCurrentYearLoss) : undefined,
-      {
-        applied: c.farmApplied,
-        expired: c.farmExpired,
-        windUpTransfer: c.farmWindUpTransfer,
-        section80Adjustment: c.farmSection80Adjustment,
-        otherAdjustments: c.farmOtherAdjustments,
-      },
-    ),
-    restrictedFarm: carryForward(
-      num(c.restrictedFarmOpening),
-      restrictedFarmCarriedBack !== undefined
-        ? { ...federal.losses.restrictedFarm, carriedBack: restrictedFarmCarriedBack }
-        : federal.losses.restrictedFarm,
-      present(c.restrictedFarmCurrentYearLoss) ? num(c.restrictedFarmCurrentYearLoss) : undefined,
-      {
-        applied: c.restrictedFarmApplied,
-        expired: c.restrictedFarmExpired,
-        windUpTransfer: c.restrictedFarmWindUpTransfer,
-        section80Adjustment: c.restrictedFarmSection80Adjustment,
-        otherAdjustments: c.restrictedFarmOtherAdjustments,
-      },
-    ),
     listedPersonalProperty: computeLossContinuity({
       openingBalance: num(c.lppOpening),
       currentYearLoss: num(c.lppCurrentYearLoss),
@@ -629,45 +710,6 @@ function scheduleTwentyOne(
                 applied: num(p.applied),
               })),
           ),
-        }
-      : {}),
-    // The NINTH section (page 5) — RIFE. Not part of the NetFile schema (see
-    // `computeRifeContinuity`'s own doc comment) — kept here so Schedule 12's
-    // reconciliation below can read `.deducted` for its own line 130.
-    //
-    // Three of its lines are the SAME figures federal Schedule 130 computes,
-    // and the AT1 form names each of them by its federal source: line 230 is
-    // "T2 Schedule 4 line 710", 320 is "T2 Schedule 130 line 129" and 330 is
-    // "line 130". So each defaults to federal's own figure and is overridden
-    // only where Alberta genuinely diverges — the same "blank = same as
-    // federal" rule the four loss pools above already follow.
-    // Gated on real RIFE, not on the federal block merely existing. Excess
-    // capacity on its own is not RIFE — every profitable corporation with
-    // little interest expense has plenty of it, and Schedule 12 lines 130/131
-    // disclose the restricted expenses themselves, not the headroom. So the
-    // block is filed when the preparer entered something, or when federal
-    // actually restricted (`rifeForYear`) or deducted (`rifeDeductible`) some.
-    ...(c.rife ||
-    (federal.eifelCapacity?.rifeForYear ?? 0) > 0 ||
-    (federal.eifelCapacity?.rifeDeductible ?? 0) > 0
-      ? {
-          rife: computeRifeContinuity({
-            openingBalance: num(c.rife?.openingBalance),
-            transferredOnWindUp: num(c.rife?.transferredOnWindUp),
-            acquisitionOfControlAdjustment: num(c.rife?.acquisitionOfControlAdjustment),
-            currentYearRife: present(c.rife?.currentYearRife)
-              ? num(c.rife?.currentYearRife)
-              : (federal.eifelCapacity?.rifeForYear ?? 0),
-            excessCapacity: present(c.rife?.excessCapacity)
-              ? num(c.rife?.excessCapacity)
-              : (federal.eifelCapacity?.excessCapacityBeforeRife ?? 0),
-            receivedCapacity: present(c.rife?.receivedCapacity)
-              ? num(c.rife?.receivedCapacity)
-              : (federal.eifelCapacity?.receivedCapacity ?? 0),
-            ...(present(c.rife?.deductedClaim)
-              ? { deductedClaim: num(c.rife?.deductedClaim) }
-              : {}),
-          }),
         }
       : {}),
   };
@@ -855,6 +897,40 @@ function resourceDeductionAdjustments(
       fed?.cogpeClaim ?? 0,
     ),
   ];
+}
+
+/**
+ * The federal T2 Division C figures AT1 reads, resolved ONCE.
+ *
+ * AT1 Schedule 12 (Area B) and AT1 Schedule 21 Part 1 both carry these, and the
+ * specification requires them to be the same figure on both — Schedule 21's
+ * 005/007/011/012 "must equal fed 200320/325/350/352", and Schedule 12 prints
+ * "T2 line 320" etc. over its own boxes. Resolving them in two places is how
+ * the two schedules would come to disagree about one number.
+ *
+ * Where each comes from:
+ *   320, 350, 352, 355  the preparer's entry in `ri.albertaSchedule12` — the
+ *                       federal engine computes none of them;
+ *   325                 the preparer's entry if made, otherwise the federal
+ *                       engine's own Part VI.1 deduction. The entry exists so
+ *                       a return whose T2 was prepared elsewhere can still
+ *                       state it: with no T2 inputs, the engine computes zero.
+ *
+ * `undefined` means "not supplied", which is not the same as zero — Schedule
+ * 12's Area B pairs omit what was never supplied rather than asserting a zero.
+ */
+export function federalDivisionC(federal: FederalT2Result, v: Ri['albertaSchedule12']) {
+  const engineVI1 = federal.partVI1Deduction?.deduction;
+  const line355 = v?.section110_5Additions;
+  return {
+    line320: v?.taxableDividendsDeductible,
+    line325: v?.partVI1TaxDeductible ?? engineVI1,
+    line350: v?.prospectorsShares,
+    line352: v?.nonQualifiedSecuritiesDeduction,
+    line355,
+    /** AT1 Schedule 21 line 017 = Schedule 12 line 082 — Alberta's own additions, defaulting to federal. */
+    albertaSection110_5Additions: v?.albertaSection110_5Additions ?? line355,
+  };
 }
 
 /**
@@ -1092,11 +1168,14 @@ function scheduleTwelve(
       : {}),
     lossDeductions,
     // 062/063 — Part VI.1 tax deduction, federal T2 line 325 on both sides.
-    // The engine computes it; Alberta has no separate election, so the two
-    // agree and `alwaysPair` files both (Area B transmits regardless).
+    // Alberta has no separate election, so the two agree and `alwaysPair`
+    // files both (Area B transmits regardless). Resolved through
+    // `federalDivisionC` so this and Schedule 21 line 007 are one figure —
+    // the preparer's entry when the T2 was prepared elsewhere, the federal
+    // engine's own otherwise.
     partVI1Deduction: {
-      alberta: federal.partVI1Deduction?.deduction ?? 0,
-      federal: federal.partVI1Deduction?.deduction ?? 0,
+      alberta: federalDivisionC(federal, areaB).line325 ?? 0,
+      federal: federalDivisionC(federal, areaB).line325 ?? 0,
     },
     // The five Area B pairs neither engine computes. The form's own
     // instruction is to copy them off the federal T2, so they are COLLECTED

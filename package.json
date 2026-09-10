@@ -19,7 +19,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format:baseline": "biome check --write src/"
+    "format:baseline": "biome check --write src/",
+    "corpus": "tsx scripts/record-corpus.ts",
+    "corpus:accept": "tsx scripts/record-corpus.ts --write"
   },
   "dependencies": {
     "@better-auth/api-key": "^1.7.1",

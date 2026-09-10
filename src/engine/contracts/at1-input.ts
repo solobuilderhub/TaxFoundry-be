@@ -1036,6 +1036,12 @@ export const AlbertaSchedule12Values = z
       .describe(
         '012082 — Alberta override, from AT1 Schedule 21 line 017. Leave blank when it equals the federal amount.',
       ),
+    partVI1TaxDeductible: z
+      .number()
+      .optional()
+      .describe(
+        "012063 / AT1 Schedule 21 line 007 — Part VI.1 tax deductible. Federal T2 line 325. Blank = the federal engine's own figure, from the T2 preferred-share schedules. Enter it here when the T2 was not prepared in this app, so there is nothing for the engine to compute it from.",
+      ),
   })
   .meta({ id: 'AlbertaSchedule12Values' });
 
