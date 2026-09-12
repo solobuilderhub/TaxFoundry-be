@@ -38,6 +38,7 @@ import {
   AlbertaSbdValues,
   AlbertaSchedule12Values,
   AlbertaSchedule18Values,
+  AlbertaSred16Values,
   AlbertaValues,
 } from './at1-input.js';
 import { QuebecValues } from './co17-input.js';
@@ -101,6 +102,7 @@ export const ReturnInputSchema = z
     albertaSchedule12: AlbertaSchedule12Values.optional(),
     albertaSchedule18: AlbertaSchedule18Values.optional(),
     albertaResourceDeductions15: AlbertaResourceDeductions15Values.optional(),
+    albertaSred16: AlbertaSred16Values.optional(),
   })
   .meta({ id: 'ReturnInput' })
   // Forward-compatible: apps/web and apps/server deploy independently, so a

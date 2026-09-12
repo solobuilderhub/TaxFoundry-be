@@ -1412,6 +1412,109 @@ export const CfreCountrySuccessorRow = z
   })
   .meta({ id: 'CfreCountrySuccessorRow' });
 
+/**
+ * AT1 Schedule 16 — the Alberta SR&ED **expenditure pool**.
+ *
+ * Not the SR&ED investment tax credit (federal Schedule 31) and not the
+ * Innovation Employment Grant (AT1 Schedule 29); both are modelled elsewhere.
+ * This is the deduction against income: expenditures in, assistance and
+ * credits out, a discretionary claim, and the remainder carried forward
+ * indefinitely.
+ *
+ * ── Why six of these nine are transcribed, not derived ──────────────────────
+ *
+ * The specification says "value must equal fed 032nnn" for 002, 004, 006, 008,
+ * 010 and 015, and the printed form names the federal source beside each box —
+ * "(federal schedule 32 (T661) line 400)". TRA expects the preparer to copy
+ * them across, and this product models no T661 at all: its single federal SR&ED
+ * figure (`credits.sredQualifiedExpenditures`) is the Schedule 31 ITC base,
+ * which is none of the six.
+ *
+ * So they are collected here, as the paper form collects them. Sourcing them
+ * from a T661 slice would be better and is a larger, separate piece of work;
+ * inventing them from the one federal number available would be worse than
+ * either, because it would look derived and be wrong.
+ *
+ * Only 012, 014 and 020 are genuinely Alberta-variable, which is exactly why
+ * the form is required "if the opening balance or the claim for Alberta
+ * purposes differs from that for federal purposes".
+ *
+ * Until this slice existed the schedule could not be filed at all: the engine
+ * (`computeAlbertaSchedule16`) and the payload builder (`schedule16Values`)
+ * were both complete and tested, and nothing ever built their input.
+ */
+export const AlbertaSred16Values = z
+  .object({
+    currentYearExpenditures: z
+      .number()
+      .optional()
+      .describe(
+        '016002 — allowable SR&ED expenditures. Transcribe federal T661 line 400; the spec ' +
+          'requires this to equal it.',
+      ),
+    assistance: z
+      .number()
+      .optional()
+      .describe(
+        '016004 — government and non-government assistance for the expenditures above. ' +
+          'Transcribe federal T661 line 430 (2007 and earlier) or the sum of lines 429, 431 ' +
+          'and 432 (2008 onward).',
+      ),
+    priorYearItcClaimed: z
+      .number()
+      .optional()
+      .describe(
+        "016006 — previous year's investment tax credit claimed for SR&ED. Transcribe " +
+          'federal T661 line 435.',
+      ),
+    saleOfCapitalAssetsAndOther: z
+      .number()
+      .optional()
+      .describe(
+        '016008 — sale of SR&ED capital assets and other deductions. Transcribe federal ' +
+          'T661 line 440.',
+      ),
+    assistanceRepayments: z
+      .number()
+      .optional()
+      .describe(
+        '016010 — repayments of government and non-government assistance for SR&ED. ' +
+          'Transcribe federal T661 line 445.',
+      ),
+    priorYearItcRecaptured: z
+      .number()
+      .optional()
+      .describe(
+        '016015 — amount of ITC recaptured in the previous tax year. Transcribe federal ' +
+          'T661 line 453.',
+      ),
+    openingPoolBalance: z
+      .number()
+      .optional()
+      .describe(
+        '016012 — unclaimed SR&ED expenditure pool balance from the previous year. MAY ' +
+          'DIFFER for Alberta, and is one of the two figures whose divergence makes this ' +
+          'schedule required. Last year’s line 022.',
+      ),
+    poolTransferredIn: z
+      .number()
+      .optional()
+      .describe(
+        '016014 — pool transferred on the amalgamation or wind-up of a wholly-owned ' +
+          'subsidiary. MAY DIFFER for Alberta.',
+      ),
+    amountClaimed: z
+      .number()
+      .optional()
+      .describe(
+        '016020 — SR&ED expenditure pool deduction claimed this year. Blank claims the ' +
+          'WHOLE available pool; the claim is discretionary, so a corporation with no ' +
+          'income to shelter would normally claim nil and carry the pool forward. Capped ' +
+          'at line 018.',
+      ),
+  })
+  .meta({ id: 'AlbertaSred16Values' });
+
 export const AlbertaResourceDeductions15Values = z
   .object({
     daysInTaxYear: z
@@ -1499,3 +1602,4 @@ export type SfedeCountrySuccessorRow = z.infer<typeof SfedeCountrySuccessorRow>;
 export type CfreCountryRegularRow = z.infer<typeof CfreCountryRegularRow>;
 export type CfreCountrySuccessorRow = z.infer<typeof CfreCountrySuccessorRow>;
 export type AlbertaResourceDeductions15Values = z.infer<typeof AlbertaResourceDeductions15Values>;
+export type AlbertaSred16Values = z.infer<typeof AlbertaSred16Values>;

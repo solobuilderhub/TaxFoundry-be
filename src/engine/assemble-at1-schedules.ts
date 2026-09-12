@@ -36,7 +36,6 @@
 import {
   type AlbertaReturnInput,
   albertaCcaScheduleAdjustments,
-  computeCurrentYearNonCapitalLoss,
   albertaDispositionAdjustments,
   albertaReserveDifference,
   albertaResourceDeductionDifference,
@@ -44,6 +43,7 @@ import {
   computeAlbertaSchedule13,
   computeAlbertaSchedule17,
   computeAlbertaSchedule18,
+  computeCurrentYearNonCapitalLoss,
   computeDonationMaximum,
   computeLimitedPartnershipLosses,
   computeLossCarryback,
@@ -65,6 +65,7 @@ import type { ComposedFederalInput } from './assemble-t2-input.js';
 import { assembleSchedule3 } from './at1-schedule-composers/schedule-3-compose.js';
 import { assembleSchedule4 } from './at1-schedule-composers/schedule-4-compose.js';
 import { assembleSchedule15 } from './at1-schedule-composers/schedule-15-compose.js';
+import { assembleSchedule16 } from './at1-schedule-composers/schedule-16-compose.js';
 import type {
   AlbertaAssociatedCorpMember,
   AlbertaContinuityValues,
@@ -1429,6 +1430,7 @@ export function assembleAt1Schedules(
   const otherDeductionsCredits = assembleSchedule3(ri);
   const foreignInvestmentTaxCredit = assembleSchedule4(ri);
   const resourceDeductions = assembleSchedule15(ri);
+  const scientificResearch = assembleSchedule16(ri);
 
   // Schedule 12 needs 13/17/18's results AND the loss continuities' results —
   // but the continuities need Schedule 12's OWN current-year-loss figure.
@@ -1531,6 +1533,7 @@ export function assembleAt1Schedules(
       : {}),
     ...(cca ? { cca } : {}),
     ...(resourceDeductions ? { resourceDeductions } : {}),
+    ...(scientificResearch ? { scientificResearch } : {}),
     ...(reserves ? { reserves } : {}),
     ...(dispositions ? { dispositions } : {}),
     ...(donations ? { donations } : {}),

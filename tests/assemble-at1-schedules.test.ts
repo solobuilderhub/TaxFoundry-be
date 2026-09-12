@@ -224,11 +224,7 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
     };
     const rows = engineInput.schedules?.donations?.gifts?.carryforward;
     expect(rows).toHaveLength(3);
-    expect(rows?.map((r) => r.yearOfOrigin)).toEqual([
-      '2022-12-31',
-      '2023-12-31',
-      '2024-12-31',
-    ]);
+    expect(rows?.map((r) => r.yearOfOrigin)).toEqual(['2022-12-31', '2023-12-31', '2024-12-31']);
     // Row 1 takes the charitable pool's closing balance as its default…
     expect(rows?.[0]?.charitable).toBe(
       engineInput.schedules?.donations?.charitable?.closingBalance,
@@ -1076,5 +1072,80 @@ describe('Schedule 21 — losses by year of origin (row 0 derived, priors are AT
     // The other-losses ledger (181/183) filed too.
     expect(byId.get('021181001')).toBe(0);
     expect(byId.get('021183001')).toBe(3_000);
+  });
+});
+
+/**
+ * AT1 Schedule 16 — the SR&ED pool, which could not be filed at all.
+ *
+ * `computeAlbertaSchedule16` and `schedule16Values` were both complete and
+ * tested, and `alberta-return.ts` already pushed the payload whenever
+ * `schedules.scientificResearch` existed — but no composer ever built it, and
+ * there was no contract slice to build it from. Every existing test called the
+ * builder directly, so nothing noticed the schedule was unreachable.
+ */
+describe('assembleProvincialInput(AT1) — Schedule 16, the SR&ED pool', () => {
+  const fed = { taxableIncome: 500_000 };
+
+  it('is absent when the slice holds nothing', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, {}, { isCcpc: true }) as {
+      schedules?: { scientificResearch?: unknown };
+    };
+    expect(engineInput.schedules?.scientificResearch).toBeUndefined();
+  });
+
+  /**
+   * A corporation claiming nil this year against an inherited pool enters ONLY
+   * the opening balance — and that is a Schedule 16 to file, because the pool
+   * has to be disclosed to be carried forward. Gating on the expenditures
+   * would drop exactly the return the carry-forward exists for.
+   */
+  it('files from the opening pool balance alone', () => {
+    const engineInput = assembleProvincialInput(
+      'AT1',
+      fed,
+      { albertaSred16: { openingPoolBalance: 90_000 } },
+      { isCcpc: true },
+    ) as { schedules?: { scientificResearch?: { availableDeduction?: number } } };
+    expect(engineInput.schedules?.scientificResearch).toBeDefined();
+  });
+
+  it('composes the pool from the nine collected figures', () => {
+    const engineInput = assembleProvincialInput(
+      'AT1',
+      fed,
+      {
+        albertaSred16: {
+          currentYearExpenditures: 400_000,
+          assistance: 50_000,
+          openingPoolBalance: 100_000,
+          amountClaimed: 300_000,
+        },
+      },
+      { isCcpc: true },
+    ) as {
+      schedules?: {
+        scientificResearch?: { subtotal?: number; amountClaimed?: number };
+      };
+    };
+    const s16 = engineInput.schedules?.scientificResearch;
+    // 016 = 002 − (004 + 006 + 008) + 010 + 012 + 014 + 015
+    expect(s16?.subtotal).toBe(450_000);
+    expect(s16?.amountClaimed).toBe(300_000);
+  });
+
+  /**
+   * A BLANK claim means "claim the whole pool", which is the engine's
+   * documented default. Coercing it to 0 would claim nothing instead — the
+   * opposite answer for a corporation with income to shelter.
+   */
+  it('treats a blank claim as the whole pool, not as nil', () => {
+    const engineInput = assembleProvincialInput(
+      'AT1',
+      fed,
+      { albertaSred16: { currentYearExpenditures: 200_000 } },
+      { isCcpc: true },
+    ) as { schedules?: { scientificResearch?: { amountClaimed?: number } } };
+    expect(engineInput.schedules?.scientificResearch?.amountClaimed).toBe(200_000);
   });
 });
