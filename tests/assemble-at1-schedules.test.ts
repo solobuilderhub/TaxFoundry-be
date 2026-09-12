@@ -151,7 +151,9 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
     // closing balance whenever that pool exists) — what actually gates the whole
     // 090-100 block being FILED is `yearOfOrigin`, verified renderer-side in
     // `packages/ca-tax/tests/at1-netfile-schedules.test.ts`.
-    expect(engineInput.schedules?.donations?.gifts?.carryforward?.yearOfOrigin).toBeUndefined();
+    // Now an ARRAY of rows, so "nothing entered" is no rows at all rather
+    // than one row with an absent year.
+    expect(engineInput.schedules?.donations?.gifts?.carryforward).toEqual([]);
   });
 
   it("lines 090-100 — carries the entered breakdown, defaulting charitable to its own pool's closing balance", () => {
@@ -160,9 +162,13 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
       alberta: { ...riWithDivergence.alberta },
       albertaDonations: {
         giftsCurrentYear: 10_000,
-        carryforwardYearOfOrigin: '2024-12-31',
-        carryforwardToCanadaOrProvince: 2_000,
-        carryforwardCulturalProperty: 1_000,
+        carryforwardRows: [
+          {
+            yearOfOrigin: '2024-12-31',
+            toCanadaOrProvince: 2_000,
+            culturalProperty: 1_000,
+          },
+        ],
       },
     };
     const fedWithCharitable = { ...fed, charitableDonations: 5_000, openingDonationPool: 40_000 };
@@ -172,17 +178,65 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
       schedules?: {
         donations?: {
           charitable?: { closingBalance: number };
-          gifts?: { carryforward?: Record<string, unknown> };
+          gifts?: { carryforward?: Record<string, unknown>[] };
         };
       };
     };
     const donations = engineInput.schedules?.donations;
-    expect(donations?.gifts?.carryforward).toEqual({
-      yearOfOrigin: '2024-12-31',
-      charitable: donations?.charitable?.closingBalance,
-      toCanadaOrProvince: 2_000,
-      culturalProperty: 1_000,
-    });
+    expect(donations?.gifts?.carryforward).toEqual([
+      {
+        yearOfOrigin: '2024-12-31',
+        charitable: donations?.charitable?.closingBalance,
+        toCanadaOrProvince: 2_000,
+        culturalProperty: 1_000,
+      },
+    ]);
+  });
+
+  /**
+   * The block reports a balance per YEAR OF ORIGIN — what expires when — so it
+   * has to carry every year the corporation still holds a balance from. It was
+   * six scalar fields, which could carry exactly one.
+   */
+  it('lines 090-100 — carries every year of origin, defaulting charitable on the first row only', () => {
+    const riWithYears = {
+      ...riWithDivergence,
+      alberta: { ...riWithDivergence.alberta },
+      albertaDonations: {
+        giftsCurrentYear: 10_000,
+        carryforwardRows: [
+          { yearOfOrigin: '2022-12-31', toCanadaOrProvince: 2_000 },
+          { yearOfOrigin: '2023-12-31', charitable: 7_000, medicine: 50 },
+          { yearOfOrigin: '2024-12-31', ecologicalLand: 500 },
+        ],
+      },
+    };
+    const fedWithCharitable = { ...fed, charitableDonations: 5_000, openingDonationPool: 40_000 };
+    const engineInput = assembleProvincialInput('AT1', fedWithCharitable, riWithYears, {
+      isCcpc: true,
+    }) as {
+      schedules?: {
+        donations?: {
+          charitable?: { closingBalance: number };
+          gifts?: { carryforward?: Record<string, unknown>[] };
+        };
+      };
+    };
+    const rows = engineInput.schedules?.donations?.gifts?.carryforward;
+    expect(rows).toHaveLength(3);
+    expect(rows?.map((r) => r.yearOfOrigin)).toEqual([
+      '2022-12-31',
+      '2023-12-31',
+      '2024-12-31',
+    ]);
+    // Row 1 takes the charitable pool's closing balance as its default…
+    expect(rows?.[0]?.charitable).toBe(
+      engineInput.schedules?.donations?.charitable?.closingBalance,
+    );
+    // …row 2 keeps what was entered, and row 3 gets no default at all: the
+    // pool is one figure with no per-year breakdown to spread.
+    expect(rows?.[1]?.charitable).toBe(7_000);
+    expect(rows?.[2]?.charitable).toBeUndefined();
   });
 
   it('populates loss continuity only when Alberta opening balances were entered', () => {

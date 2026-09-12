@@ -784,30 +784,32 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
 
   const remainingCeiling = Math.max(0, maximum.maximumDeduction - (charitable?.amountApplied ?? 0));
 
-  // 090-100 — carryforward available, by category. Filed only when the
-  // preparer entered a year of origin; charitable (092) defaults to the
-  // charitable pool's own closing balance, the other three categories have
-  // no federal source to default from at all (see this schedule's own doc
-  // comment in `alberta-donations.ts`).
-  const carryforwardYearOfOrigin = present(d.carryforwardYearOfOrigin)
-    ? String(d.carryforwardYearOfOrigin)
-    : undefined;
-  const albertaCarryforward = carryforwardYearOfOrigin
-    ? {
-        yearOfOrigin: carryforwardYearOfOrigin,
-        ...(present(d.carryforwardCharitable) ? { charitable: num(d.carryforwardCharitable) } : {}),
-        ...(present(d.carryforwardToCanadaOrProvince)
-          ? { toCanadaOrProvince: num(d.carryforwardToCanadaOrProvince) }
-          : {}),
-        ...(present(d.carryforwardCulturalProperty)
-          ? { culturalProperty: num(d.carryforwardCulturalProperty) }
-          : {}),
-        ...(present(d.carryforwardEcologicalLand)
-          ? { ecologicalLand: num(d.carryforwardEcologicalLand) }
-          : {}),
-        ...(present(d.carryforwardMedicine) ? { medicine: num(d.carryforwardMedicine) } : {}),
-      }
-    : undefined;
+  // 090-100 — carryforward available by year of origin, ONE ROW PER YEAR.
+  // Each row is filed as its own occurrence and only when that row carries a
+  // year; charitable (092) defaults to the charitable pool's own closing
+  // balance on the FIRST row, the other three categories have no federal
+  // source to default from at all (see this schedule's own doc comment in
+  // `alberta-donations.ts`).
+  //
+  // Was six scalar fields, so the whole chain carried one year — which is the
+  // one thing this block is not for. It reports what expires when, and that
+  // needs every year the corporation still holds a balance from.
+  const albertaCarryforward = (d.carryforwardRows ?? []).map((r) =>
+    present(r.yearOfOrigin)
+      ? {
+          yearOfOrigin: String(r.yearOfOrigin),
+          ...(present(r.charitable) ? { charitable: num(r.charitable) } : {}),
+          ...(present(r.toCanadaOrProvince)
+            ? { toCanadaOrProvince: num(r.toCanadaOrProvince) }
+            : {}),
+          ...(present(r.culturalProperty) ? { culturalProperty: num(r.culturalProperty) } : {}),
+          ...(present(r.ecologicalLand) ? { ecologicalLand: num(r.ecologicalLand) } : {}),
+          ...(present(r.medicine) ? { medicine: num(r.medicine) } : {}),
+        }
+      : // Yearless: kept as a positional hole so the rows after it still line
+        // up against their federal counterparts. `computeSchedule20` drops it.
+        undefined,
+  );
 
   const gifts = hasGifts
     ? computeSchedule20({
@@ -818,8 +820,23 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
         acquisitionOfControlAdjustment: num(d.giftsAcquisitionOfControlAdjustment),
         ...(present(d.giftsApplied) ? { amountApplied: num(d.giftsApplied) } : {}),
         incomeLimit: remainingCeiling,
-        ...(charitable ? { federalCarryforward: { charitable: charitable.closingBalance } } : {}),
-        ...(albertaCarryforward ? { albertaCarryforward } : {}),
+        /*
+         * The charitable default applies to the FIRST row only — it is the
+         * charitable pool's own closing balance, one figure, and the pool has
+         * no per-year breakdown to spread across the rows. Later rows get
+         * whatever the preparer entered and no default.
+         *
+         * Gated on a row EXISTING. Supplied unconditionally it manufactures a
+         * carryforward out of nothing: the federal side alone resolves to one
+         * row of `{ charitable: 0 }`, which carries no year of origin and so
+         * can never be filed (090 is mandatory for the row), leaving a phantom
+         * row in the result for every corporation that reported no
+         * carryforward at all. This block is entered, never derived.
+         */
+        ...(charitable && albertaCarryforward.length > 0
+          ? { federalCarryforward: [{ charitable: charitable.closingBalance }] }
+          : {}),
+        ...(albertaCarryforward.length > 0 ? { albertaCarryforward } : {}),
       })
     : undefined;
 
