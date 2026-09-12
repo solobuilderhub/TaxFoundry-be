@@ -137,6 +137,60 @@ export const AlbertaSbdValues = z
  * never be derived — same rule as every other AT1-only opening balance in
  * this engine.
  */
+/**
+ * AT1 Schedule 20, lines 090-100 — ONE year of origin in the
+ * carryforward-by-year block.
+ *
+ * The page prints six of these rows and a Totals line beneath them, each filed
+ * as its own occurrence of 090-100. This used to be six SCALAR fields on
+ * `AlbertaDonationsValues` — `carryforwardYearOfOrigin`, `carryforwardCharitable`
+ * and so on — so the whole chain could carry exactly one year, and a
+ * corporation with donations from three years could record only one of them.
+ * Since the block exists precisely to show which year each balance came from,
+ * and therefore what expires when, one row answered the question only for the
+ * corporation that had one year to report.
+ *
+ * Uncapped deliberately. The printed form gives six rows, but TRA's occurrence
+ * field is three digits and the comparable by-year-of-origin blocks on
+ * Schedule 21 already file at 21 occurrences; a cap chosen from the paper
+ * would refuse a return that is otherwise correct.
+ */
+export const AlbertaDonationCarryforwardRow = z
+  .object({
+    yearOfOrigin: z
+      .string()
+      .optional()
+      .describe(
+        '020090 — year of origin. MANDATORY for the row: 090 is required whenever any of ' +
+          '092-100 has a value, so a row without it is not filed at all and does not consume ' +
+          'an occurrence number.',
+      ),
+    charitable: z
+      .number()
+      .optional()
+      .describe(
+        '020092 — charitable donations available for carryforward. On the FIRST row only, ' +
+          'blank defaults to the charitable pool’s own closing balance.',
+      ),
+    toCanadaOrProvince: z
+      .number()
+      .optional()
+      .describe('020094 — gifts to Canada, a province or territory. No default.'),
+    culturalProperty: z
+      .number()
+      .optional()
+      .describe('020096 — certified cultural property. No default.'),
+    ecologicalLand: z
+      .number()
+      .optional()
+      .describe('020098 — ecologically sensitive land. No default.'),
+    medicine: z
+      .number()
+      .optional()
+      .describe('020100 — additional deduction for gifts of medicine. No default.'),
+  })
+  .meta({ id: 'AlbertaDonationCarryforwardRow' });
+
 export const AlbertaDonationsValues = z
   .object({
     charitableExpired: z
@@ -207,39 +261,18 @@ export const AlbertaDonationsValues = z
       .number()
       .optional()
       .describe('020040 — the capital cost of the gifted property.'),
-    carryforwardYearOfOrigin: z
-      .string()
+    carryforwardRows: z
+      .array(AlbertaDonationCarryforwardRow)
       .optional()
       .describe(
-        '020090-100 — carryforward available, broken out by category. Charitable (092) and the ' +
-          'gifts pool (062-078) are each ONE combined continuity on this schedule; these four ' +
-          'report how much of the gifts pool’s closing balance belongs to each of the three ' +
-          'federal source categories, plus the medicine-gift deduction (ITA s.110.1(1)(a.1)), ' +
-          'which nothing else models. Filed only when 090 (year of origin) is present — leave ' +
-          'all five blank to omit the whole block. Charitable (092) defaults to the charitable ' +
-          'pool’s own closing balance when 090 is present but 092 is left blank; the other four ' +
-          'have no default at all, since the engine tracks them as one combined figure.',
+        '020090-100 — carryforward available by year of origin, ONE ROW PER YEAR. Charitable ' +
+          '(092) and the gifts pool (062-078) are each ONE combined continuity on this ' +
+          'schedule; the other four columns report how much of the gifts pool’s closing ' +
+          'balance belongs to each of the three federal source categories, plus the ' +
+          'medicine-gift deduction (ITA s.110.1(1)(a.1)), which nothing else models. Each row ' +
+          'is filed as its own occurrence of 090-100, and only when that row’s year of origin ' +
+          'is present — omit the array, or leave every row yearless, to omit the whole block.',
       ),
-    carryforwardCharitable: z
-      .number()
-      .optional()
-      .describe('020092 — blank = the charitable pool’s own closing balance.'),
-    carryforwardToCanadaOrProvince: z
-      .number()
-      .optional()
-      .describe('020094 — gifts to Canada, a province or territory. No default.'),
-    carryforwardCulturalProperty: z
-      .number()
-      .optional()
-      .describe('020096 — certified cultural property. No default.'),
-    carryforwardEcologicalLand: z
-      .number()
-      .optional()
-      .describe('020098 — ecologically sensitive land. No default.'),
-    carryforwardMedicine: z
-      .number()
-      .optional()
-      .describe('020100 — additional deduction for gifts of medicine. No default.'),
   })
   .meta({ id: 'AlbertaDonationsValues' });
 
