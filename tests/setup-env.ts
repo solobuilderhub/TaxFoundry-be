@@ -1,20 +1,24 @@
 /**
  * Test-environment defaults, applied before any module reads `process.env`.
  *
- * `src/config/at1-transmitter.ts` resolves the filer (transmitter) identity at
- * MODULE LOAD, and `at1-transmit.service.ts` now refuses to transmit when that
- * identity would be rejected by TRA. The shipped fallback phone is
- * `0000000000`, which TRA rejects with error 20100 — so without this, every
- * test that exercises the transmit path fails on deployment configuration
- * rather than on the thing it is testing.
+ * ── Deliberately empty of transmitter settings ──────────────────────────────
  *
- * These values model a CORRECTLY CONFIGURED deployment. They are deliberately
- * obvious test data, and they never reach TRA: the tests that use them install
- * a mock gateway. A real deployment supplies its own via the environment.
+ * This file used to set six of them — `TRANSMITTER_PHONE`,
+ * `TRA_SOFTWARE_CERT_CODE` and friends — because `src/config/at1-transmitter.ts`
+ * resolved the filer identity at MODULE LOAD and `at1-transmit.service.ts`
+ * refused to transmit when that identity would be rejected by TRA. Without
+ * them, every test touching the transmit path failed on deployment
+ * configuration rather than on the thing it was testing.
+ *
+ * The EDI schedule is preparer-entered now, so there is no such configuration:
+ * `src/config/at1-transmitter.ts` is gone, and the filer's identity comes off
+ * the return like every other filed value. A transmit fixture supplies it
+ * explicitly — see `EDI_FILER` in `ledger-invariants.test.ts` and
+ * `compute-route.integration.test.ts` — which is better than a module-load
+ * side effect, because the test now SHOWS what makes the return filable.
+ *
+ * Kept as a file rather than deleted: `vitest.config.ts` names it in
+ * `setupFiles`, and the next environment default that genuinely has to land
+ * before module load belongs here.
  */
-process.env.TRANSMITTER_PHONE ??= '7805550100';
-process.env.TRANSMITTER_EMAIL ??= 'filing-tests@example.com';
-process.env.TRANSMITTER_LEGAL_NAME ??= 'TaxFoundry Test Filer Inc.';
-process.env.TRANSMITTER_CONTACT_FIRST ??= 'Test';
-process.env.TRANSMITTER_CONTACT_LAST ??= 'Filer';
-process.env.TRA_SOFTWARE_CERT_CODE ??= 'AB9999';
+export {};

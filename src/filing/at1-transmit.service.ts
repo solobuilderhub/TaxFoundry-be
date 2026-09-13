@@ -12,7 +12,6 @@ import { validateAt1Transmitter } from '@classytic/ca-tax/t2';
 import { withTransaction } from '@classytic/mongokit';
 import { createError } from '@classytic/repo-core/errors';
 import mongoose from 'mongoose';
-import { at1Transmitter } from '#config/at1-transmitter.js';
 import type { EngagementYearDocument } from '#resources/engagement/engagement-year/engagement-year.model.js';
 import engagementYearRepository from '#resources/engagement/engagement-year/engagement-year.repository.js';
 import type { ComputedReturnDocument } from '#resources/ledger/computed-return/computed-return.model.js';
@@ -106,34 +105,56 @@ export async function transmitAt1(params: TransmitAt1Params): Promise<TransmitAt
     );
   }
 
-  // The FILER's own details, against TRA's own rules, before anything leaves.
-  // Checked HERE and not in `prepareAt1NetFile`: preparing a payload for review
-  // is a local act that a deployment without filer credentials should still be
-  // able to do; transmitting is not. Without this the first sign of a bad
-  // config is a live round trip returning a bare numeric code and no message —
-  // a placeholder phone came back `20100` after 7.5 seconds, with nothing
-  // pointing at the phone, the environment variable, or the fact that the
-  // return itself was fine. 422: the request is well-formed, the server is not.
-  const transmitterDefects = validateAt1Transmitter(at1Transmitter);
-  if (transmitterDefects.length > 0) {
-    throw createError(
-      422,
-      `Cannot transmit: the filer (transmitter) configuration would be rejected by TRA — ${transmitterDefects
-        .map((d) => `${d.field} [TRA ${d.traCode}]: ${d.message}`)
-        .join(' ')} These are server settings, not anything on this return.`,
-    );
-  }
-
-  // Render the payload (also validates certification), then the final guard.
-  const { xml, payloadHash } = await prepareAt1NetFile({
+  // Render the payload (also validates certification), then the final guards.
+  const { xml, payloadHash, transmitter } = await prepareAt1NetFile({
     engagementId: params.engagementId,
     orgId: params.orgId,
     certification: params.certification,
   });
+
   const fields = (computed.fields as { line: string; value: unknown; provenance: string }[]).map(
     (f): ProvenancedField => ({ line: f.line, value: f.value, provenance: f.provenance }),
   );
   assertFiledProvenance(fields); // nothing 'model' reaches the wire
+
+  /*
+   * The FILER's own details, against TRA's own rules, before anything leaves.
+   *
+   * Checked HERE and not inside `prepareAt1NetFile`: preparing a payload for
+   * review is a local act that an incompletely-filled EDI schedule should still
+   * permit — refusing to render is not how a preparer discovers which box is
+   * empty. Transmitting is not. Without this the first sign of a bad filer
+   * detail is a live round trip returning a bare numeric code and no message: a
+   * placeholder phone came back `20100` after 7.5 seconds, with nothing
+   * pointing at the phone or at the fact that the return itself was fine.
+   *
+   * It validates the transmitter the PAYLOAD carries, which it did not used to.
+   * It validated `at1Transmitter` — the deployment config — which was the same
+   * object while config was the only source. Once the EDI schedule became
+   * preparer-entered that checked the wrong thing in both directions: a
+   * configured deployment passed the guard while transmitting whatever had been
+   * typed, and an unconfigured one failed even when correctly filled in.
+   *
+   * 422 either way: the request is well-formed, the return is not filable yet.
+   *
+   * ── Ordered AFTER the provenance guard, deliberately ─────────────────────
+   *
+   * The provenance guard is the load-bearing one: nothing with 'model'
+   * provenance may reach the wire, ever. Moving this check to the payload
+   * put it ahead of that guard by accident, and an incomplete EDI schedule
+   * then MASKED a tampered figure — the transmission was still refused, but
+   * for the lesser of the two reasons, and the audit trail said so.
+   * `ledger-invariants.test.ts` caught it by name.
+   */
+  const transmitterDefects = validateAt1Transmitter(transmitter);
+  if (transmitterDefects.length > 0) {
+    throw createError(
+      422,
+      `Cannot transmit: the filer (transmitter) details would be rejected by TRA — ${transmitterDefects
+        .map((d) => `${d.field} [TRA ${d.traCode}]: ${d.message}`)
+        .join(' ')} These are on the EDI schedule of this return.`,
+    );
+  }
 
   // Durable pre-egress attempt + idempotency guard.
   const { attemptId } = await beginSubmissionAttempt({

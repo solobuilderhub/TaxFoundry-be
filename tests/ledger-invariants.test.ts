@@ -52,6 +52,40 @@ const CLIENT_B = '64f0000000000000000000d2';
 const certification = { firstName: 'Sam', lastName: 'Preparer', position: 'Director' };
 
 /** A complete, balanced structured return — the fileable path. */
+/**
+ * The EDI schedule — the filer's own identity, and now MANDATORY to transmit.
+ *
+ * It used to come from deployment config (`#config/at1-transmitter`, read from
+ * environment variables at boot), so no fixture had to supply it and none did.
+ * It is preparer-entered now, so an AT1 with this slice empty is refused at the
+ * transmit boundary by `validateAt1Transmitter` naming all ten missing
+ * mandatory fields — correct fail-closed behaviour, and why the transmit
+ * fixtures below carry it.
+ *
+ * Shared rather than inlined: the two compute paths in this file use different
+ * payloads, and adding it to only one left the transmit tests failing for a
+ * reason that looked like the provenance guard.
+ */
+const EDI_FILER = {
+  softwareCertCode: 'AT1738',
+  webServiceVersion: '1.0.0',
+  softwareVersion: 'v2025.2',
+  serialNumber: 'SR_0001',
+  thirdPartyIndicator: '1',
+  legalName: 'TaxFoundry Inc.',
+  organizationType: 'CORPORATION',
+  contactFirstName: 'Filing',
+  contactLastName: 'Desk',
+  contactPosition: 'Transmitter',
+  contactPhone: '7805550100',
+  contactEmail: 'filing@taxfoundry.ca',
+  addressStreet: '10123 99 Street NW',
+  addressCity: 'Edmonton',
+  addressProvince: 'AB',
+  addressPostalCode: 'T5J 3H1',
+  addressCountry: 'CA',
+};
+
 const RETURN_INPUT = {
   identification: { corpType: 'CCPC', province: 'ON', headOffice: { line1: '1 King St', city: 'Toronto' } },
   balanceSheet: { cash: 50000, accountsPayable: 50000 },
@@ -59,6 +93,7 @@ const RETURN_INPUT = {
   gifiNotes: { preparedByAccountant: true },
   sbd: { activeBusinessIncome: 300000 },
   shareholders: { list: [{ name: 'Owner', commonPct: 100 }] },
+  edi: EDI_FILER,
 };
 
 describe('Return ledger — the seven audit invariants (DB-backed)', () => {
@@ -155,6 +190,9 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       period: { start: '2024-01-01', end: '2024-12-31', label: '2024' },
       federalTaxableIncome: 195000,
       activeBusinessIncome: 195000,
+      // Frozen onto the computed return, which is what the transmit path reads
+      // — the transmit action itself carries no returnInput.
+      returnInput: { edi: EDI_FILER },
     });
     expect(res.statusCode).toBe(200);
     const cr = await ComputedReturn.findOne({ engagementYearId: engId }).sort({ createdAt: -1 }).lean();

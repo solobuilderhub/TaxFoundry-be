@@ -15,11 +15,11 @@ import {
   At1MandatoryFieldMissingError,
   type At1ScheduleData,
   At1TaxPayableMismatchError,
+  type At1TransmitterInfo,
   assertAt1MandatoryComplete,
   renderAt1NetFile,
 } from '@classytic/ca-tax/t2';
 import { createError } from '@classytic/repo-core/errors';
-import { at1SoftwareCertCode, at1Transmitter } from '#config/at1-transmitter.js';
 import clientRepository from '#resources/engagement/client/client.repository.js';
 import type { EngagementYearDocument } from '#resources/engagement/engagement-year/engagement-year.model.js';
 import engagementYearRepository from '#resources/engagement/engagement-year/engagement-year.repository.js';
@@ -47,6 +47,18 @@ export interface PrepareAt1Params {
 export interface PrepareAt1Result {
   payloadHash: string;
   xml: string;
+  /**
+   * The transmitter actually composed into this payload — the EDI schedule as
+   * the preparer entered it.
+   *
+   * Returned so the transmit boundary can validate what is being SENT.  It
+   * used to validate `at1Transmitter`, the deployment config, which was the
+   * same object back when config was the only source. Once the EDI schedule
+   * became preparer-entered that guard checked the wrong thing in both
+   * directions: a configured deployment passed while transmitting whatever
+   * was typed, and an unconfigured one failed even when correctly filled in.
+   */
+  transmitter: At1TransmitterInfo;
 }
 
 function fieldValue(fields: readonly { line: string; value: unknown }[], line: string): number {
@@ -157,6 +169,127 @@ export interface ComposeSources {
 }
 
 /**
+ * The EDI schedule — Net File transmitter / software identity, as ENTERED.
+ *
+ * ── The preparer is the source. There is no configuration fallback ──────────
+ *
+ * These values were read from environment variables at boot
+ * (`#config/at1-transmitter`) and there was no way to see or set them. An
+ * unconfigured deployment therefore carried `AB0000` and `0000000000` — exactly
+ * the two placeholders `validateAt1Transmitter` exists to refuse — and nothing
+ * in the interface said so until a live transmission came back rejected with a
+ * bare numeric code and no message text.
+ *
+ * A first attempt made the `edi` slice an OVERRIDE with config as the fallback.
+ * That was worse than either option alone: the payload would then state the
+ * transmitter's identity from two sources at once, and a preparer reading a
+ * blank box could not tell whether it meant "nil" or "whatever the server
+ * happens to be configured with". Filing is the one place a value must have
+ * exactly one origin.
+ *
+ * So the slice is authoritative and unconditional. A field nobody entered is
+ * EMPTY, not inherited — and `validateAt1Transmitter` names it at the transmit
+ * boundary, which is the fail-closed behaviour this engine applies everywhere
+ * else: a missing mandatory field refuses rather than filing a plausible
+ * default.
+ *
+ * ── Two couplings this broke, both fixed at the same time ──────────────────
+ *
+ * 1. The jacket ALSO carries the certification code, at 000005001. It read
+ *    `at1SoftwareCertCode` from config while the EDI schedule would have read
+ *    the entered value, so a preparer who supplied their own code produced a
+ *    payload whose two halves named different software. It reads this now.
+ * 2. `at1-transmit.service.ts` validated `at1Transmitter` — the CONFIG — not
+ *    the transmitter actually being sent. With entry in play that guard would
+ *    have passed a configured deployment while transmitting whatever was
+ *    typed, and failed an unconfigured one that had been filled in correctly.
+ *    It validates the composed transmitter now.
+ *
+ * ── What is NOT here ───────────────────────────────────────────────────────
+ *
+ * `isAmended` / `amendmentDescription` (EDI071/073). Those two are genuinely
+ * per-return and already come off the engagement, applied after this. Two
+ * sources for one figure is how they come to disagree.
+ */
+export function resolveTransmitter(src: ComposeSources): At1TransmitterInfo {
+  const edi = (src.computed.filingInput?.edi ?? {}) as Record<string, string | undefined>;
+  /** Entered and non-blank, or undefined. Whitespace is not an answer. */
+  const v = (key: string): string | undefined => {
+    const raw = edi[key];
+    const trimmed = typeof raw === 'string' ? raw.trim() : '';
+    return trimmed === '' ? undefined : trimmed;
+  };
+  /**
+   * The empty string for a field nobody filled in.
+   *
+   * `At1TransmitterInfo` types these as required, and the honest value for an
+   * unanswered mandatory field is absent — not a placeholder that looks filed.
+   * `validateAt1Transmitter` reports each one by name, so the preparer is told
+   * which box, rather than TRA returning a numeric code for the first of them.
+   */
+  const req = (key: string): string => v(key) ?? '';
+
+  const thirdParty = v('thirdPartyIndicator');
+  const info: At1TransmitterInfo = {
+    softwareCertCode: req('softwareCertCode'),
+    webServiceVersion: req('webServiceVersion'),
+    softwareVersion: req('softwareVersion'),
+    serialNumber: req('serialNumber'),
+    // §3.3.6.1 defines exactly '1' and '2'. Anything else is not an answer, and
+    // defaulting either way would state something the preparer did not: '2'
+    // claims "not a third party", '1' makes six more lines mandatory. Left as
+    // the empty string for the validator to name.
+    thirdPartyIndicator: (thirdParty === '1' || thirdParty === '2'
+      ? thirdParty
+      : '') as At1TransmitterInfo['thirdPartyIndicator'],
+    legalName: req('legalName'),
+    contact: {
+      firstName: req('contactFirstName'),
+      lastName: req('contactLastName'),
+      position: req('contactPosition'),
+      phone: req('contactPhone'),
+      email: req('contactEmail'),
+    },
+  };
+
+  const organizationType = v('organizationType');
+  if (
+    organizationType === 'CORPORATION' ||
+    organizationType === 'PARTNERSHIP' ||
+    organizationType === 'INDIVIDUAL'
+  ) {
+    info.organizationType = organizationType;
+  }
+
+  /*
+   * The address is emitted only when something was entered — `address` is
+   * optional on the type, and an object of five empty strings is not the same
+   * statement as no address at all. Which of its parts are MANDATORY depends on
+   * line 017, and `AT1_EDI_LINE_ITEMS` already applies that rule when it emits;
+   * every entered part is kept here regardless of the flag's current value, so
+   * a preparer who fills the address and then flips 017 does not lose it.
+   */
+  const street = v('addressStreet');
+  const line2 = v('addressLine2');
+  const city = v('addressCity');
+  const province = v('addressProvince');
+  const postalCode = v('addressPostalCode');
+  const country = v('addressCountry');
+  if (street || line2 || city || province || postalCode || country) {
+    info.address = {
+      street: street ?? '',
+      city: city ?? '',
+      province: province ?? '',
+      postalCode: postalCode ?? '',
+      country: country ?? '',
+      ...(line2 ? { line2 } : {}),
+    };
+  }
+
+  return info;
+}
+
+/**
  * Shape the filing data — PURE, so the mapping can be tested without a database.
  *
  * Extracted after a mapping bug that no test could see: the AT1 jacket answers
@@ -181,8 +314,16 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
   // `identity` carries only the client-derived fields (name, address, dates).
   // Reading them off `identity` silently yielded undefined for every one.
   const ab = ((src.computed.filingInput ?? {}).alberta ?? {}) as Record<string, unknown>;
+  const transmitter = resolveTransmitter(src);
   const data: At1FilingData = {
-    softwareCertCode: at1SoftwareCertCode,
+    /*
+     * 000005001 — the jacket states the certification code too, and it must be
+     * the SAME code the EDI schedule states at EDI001. This read
+     * `at1SoftwareCertCode` from config, which was fine while the EDI block
+     * was config-only and became a self-contradicting payload the moment a
+     * preparer could type their own.
+     */
+    softwareCertCode: transmitter.softwareCertCode,
     legalName: String(frozen?.legalName ?? live(src.client.name) ?? ''),
     address: {
       street: String(frozenAddr.street ?? live(src.client.address?.street) ?? ''),
@@ -248,8 +389,8 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
     innovationEmploymentGrant: fieldValue(fields, 'innovationEmploymentGrant'),
     certification: src.certification,
     transmitter: src.amendment
-      ? { ...at1Transmitter, isAmended: true, amendmentDescription: src.amendment.description }
-      : at1Transmitter,
+      ? { ...transmitter, isAmended: true, amendmentDescription: src.amendment.description }
+      : transmitter,
   };
   return data;
 }
@@ -357,5 +498,5 @@ export async function prepareAt1NetFile(params: PrepareAt1Params): Promise<Prepa
     throw err;
   }
   const payloadHash = createHash('sha256').update(xml, 'utf8').digest('hex');
-  return { payloadHash, xml };
+  return { payloadHash, xml, transmitter: data.transmitter };
 }
