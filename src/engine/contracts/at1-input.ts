@@ -1704,4 +1704,137 @@ export type AlbertaSred16Values = z.infer<typeof AlbertaSred16Values>;
 export type AlbertaReserve17Row = z.infer<typeof AlbertaReserve17Row>;
 export type AlbertaReserves17Values = z.infer<typeof AlbertaReserves17Values>;
 export type AlbertaCca13Row = z.infer<typeof AlbertaCca13Row>;
+/**
+ * The EDI schedule — Net File transmitter / software identity.
+ *
+ * `<Schedule Number="EDI">` in the AT1 Net File payload: who transmitted the
+ * return and with what software. Spec §3.3.6.1; the line numbers below are the
+ * ones `AT1_EDI_LINE_ITEMS` in `@classytic/ca-tax` already files against, which
+ * were transcribed from that section.
+ *
+ * ── This slice is the ONLY source. There is no configuration behind it ──────
+ *
+ * These values lived in `src/config/at1-transmitter.ts`, read from environment
+ * variables at boot, with no way to see or set them. An unconfigured
+ * deployment therefore carried `AB0000` and `0000000000` — precisely the two
+ * placeholders `validateAt1Transmitter` exists to reject — and nothing in the
+ * interface said so until a live transmission came back with a bare numeric
+ * code. That file is deleted; this is where the filer's identity comes from.
+ *
+ * A first attempt kept config as a FALLBACK behind this slice. That was worse
+ * than either option alone: the payload would state the transmitter's identity
+ * from two sources at once, and a preparer reading a blank box could not tell
+ * whether it meant "nil" or "whatever the server happens to be configured
+ * with". Filing is the one place a value must have exactly one origin.
+ *
+ * A field nobody enters is therefore EMPTY, not inherited, and
+ * `validateAt1Transmitter` names it at the transmit boundary — the same
+ * fail-closed rule the rest of this engine follows. A preparer can supply a
+ * real SCC and still cannot file a placeholder one.
+ *
+ * Worth knowing when reading a payload: the AT1 jacket states the certification
+ * code a second time, at 000005001. It reads THIS field too, so the two halves
+ * of a transmission cannot name different software.
+ *
+ * ── What is deliberately NOT here ──────────────────────────────────────────
+ *
+ * EDI071 (amended return indicator) and EDI073 (description of changes). Those
+ * two ARE per-return, and they already have a home: the engagement's own
+ * `amendmentDescription`, spread over the transmitter in
+ * `at1-netfile.service.ts`. Adding them would give one figure two sources,
+ * which is how they drift.
+ *
+ * EDI021 (organization operating name) and EDI039 (fax number) are absent
+ * because they are not in §3.3.6.1 as this codebase has it. They appear in
+ * another vendor's rendering of the same schedule, which is a lead and not a
+ * source — see the package's own rule on that. Add them when the section is to
+ * hand, not before.
+ */
+export const EdiValues = z
+  .object({
+    // ── The software block: the vendor's identity, not the return's ────────
+    softwareCertCode: z
+      .string()
+      .optional()
+      .describe(
+        'EDI001 — the Software Certification Code TRA issued at certification. ' +
+          'Validated against TRA’s own registry: a wrong one is error 20010 and the ' +
+          'return is rejected before anything else is read. Also filed on the jacket ' +
+          'at 000005001, from this same value.',
+      ),
+    webServiceVersion: z
+      .string()
+      .optional()
+      .describe('EDI011 — the Net File web service version this payload is built for.'),
+    softwareVersion: z.string().optional().describe('EDI013 — this product’s own version.'),
+    serialNumber: z
+      .string()
+      .optional()
+      .describe(
+        'EDI015 — the software serial number. TRA checks presence only (error 20013), ' +
+          'not the value.',
+      ),
+
+    // ── The third-party block: the filing firm ─────────────────────────────
+    thirdPartyIndicator: z
+      .enum(['1', '2'])
+      .optional()
+      .describe(
+        'EDI017 — is the return being filed by a third party on the corporation’s ' +
+          'behalf? "1" = yes, "2" = no. There is no "0" and no absent answer: a filer ' +
+          'who is not a third party files "2". Setting "1" makes lines 023, 051, 055, ' +
+          '057, 059 and 061 mandatory (error 10025 otherwise).',
+      ),
+    legalName: z
+      .string()
+      .optional()
+      .describe('EDI019 — the transmitting organization’s legal name.'),
+    organizationType: z
+      .enum(['CORPORATION', 'PARTNERSHIP', 'INDIVIDUAL'])
+      .optional()
+      .describe('EDI023 — type of organization. Mandatory when line 017 is "1".'),
+
+    contactFirstName: z.string().optional().describe('EDI031 — contact first name.'),
+    contactLastName: z.string().optional().describe('EDI033 — contact last name.'),
+    contactPosition: z.string().optional().describe('EDI035 — the contact’s position.'),
+    contactPhone: z
+      .string()
+      .optional()
+      .describe(
+        'EDI037 — the contact’s telephone number, 10 to 15 digits, numeric only. TRA ' +
+          'rejects punctuation and placeholders with error 20100.',
+      ),
+    contactEmail: z.string().optional().describe('EDI041 — the contact’s e-mail address.'),
+
+    addressStreet: z
+      .string()
+      .optional()
+      .describe('EDI051 — address line 1. Mandatory when line 017 is "1".'),
+    addressLine2: z.string().optional().describe('EDI053 — address line 2. Always optional.'),
+    addressCity: z
+      .string()
+      .optional()
+      .describe('EDI055 — city or town. Mandatory when line 017 is "1".'),
+    addressProvince: z
+      .string()
+      .optional()
+      .describe(
+        'EDI057 — province or state. Mandatory when line 017 is "1"; validated against ' +
+          'TRA’s province table when the country is CA or US.',
+      ),
+    addressPostalCode: z
+      .string()
+      .optional()
+      .describe(
+        'EDI059 — postal or ZIP code. Mandatory when line 017 is "1"; A9A 9A9 for CA, ' +
+          'five or nine digits for US.',
+      ),
+    addressCountry: z
+      .string()
+      .optional()
+      .describe('EDI061 — country. Mandatory when line 017 is "1".'),
+  })
+  .meta({ id: 'EdiValues' });
+
 export type AlbertaCca13Values = z.infer<typeof AlbertaCca13Values>;
+export type EdiValues = z.infer<typeof EdiValues>;

@@ -30,6 +30,41 @@ const TEST_ORG = '64f000000000000000000001';
 const MANAGER = '64f0000000000000000000a1';
 const CLIENT = '64f0000000000000000000b1';
 
+/**
+ * The EDI schedule — the filer's own identity, and now MANDATORY to transmit.
+ *
+ * It used to come from deployment config (`#config/at1-transmitter`, read from
+ * environment variables at boot), so no fixture had to supply it and none did.
+ * It is preparer-entered now, so an AT1 with this slice empty is refused at the
+ * transmit boundary by `validateAt1Transmitter` naming all ten missing
+ * mandatory fields — correct fail-closed behaviour, and why the AT1 setup
+ * below carries it.
+ *
+ * Only the transmit path needs it. The other compute fixtures here leave it
+ * out deliberately: computing and reviewing a return with an incomplete EDI
+ * schedule must keep working, or a preparer could never get far enough to
+ * discover which box is empty.
+ */
+const EDI_FILER = {
+  softwareCertCode: 'AT1738',
+  webServiceVersion: '1.0.0',
+  softwareVersion: 'v2025.2',
+  serialNumber: 'SR_0001',
+  thirdPartyIndicator: '1',
+  legalName: 'TaxFoundry Inc.',
+  organizationType: 'CORPORATION',
+  contactFirstName: 'Filing',
+  contactLastName: 'Desk',
+  contactPosition: 'Transmitter',
+  contactPhone: '7805550100',
+  contactEmail: 'filing@taxfoundry.ca',
+  addressStreet: '10123 99 Street NW',
+  addressCity: 'Edmonton',
+  addressProvince: 'AB',
+  addressPostalCode: 'T5J 3H1',
+  addressCountry: 'CA',
+};
+
 describe('POST /engagement-years/:id/compute (DB-backed)', () => {
   let ctx: TestAppContext;
   let auth: TestAuthProvider;
@@ -529,6 +564,9 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
         period: { start: '2024-01-01', end: '2024-12-31', label: '2024' },
         federalTaxableIncome: 195000,
         activeBusinessIncome: 195000,
+        // Frozen onto the computed return, which is what the transmit path
+        // reads — the transmit action itself carries no returnInput.
+        returnInput: { edi: EDI_FILER },
       },
     });
     return engId;
