@@ -5,6 +5,7 @@
  */
 import { z } from 'zod';
 import { YesNo } from './common.js';
+import { ReserveType } from './t2-input.js';
 
 /**
  * Alberta AT1 jacket — the mandatory fields the federal schedules do not
@@ -1413,6 +1414,85 @@ export const CfreCountrySuccessorRow = z
   .meta({ id: 'CfreCountrySuccessorRow' });
 
 /**
+ * AT1 Schedule 17 — ONE reserve kind's Alberta figures.
+ *
+ * Paired to the federal reserve row BY `type`, which is a fixed enum of the
+ * eight kinds the form prints. That matters: a positional pairing would break
+ * the moment either side's rows were reordered, and the previous home for
+ * these figures — three extra fields ON the federal `ReserveRow` — avoided the
+ * problem by making the Alberta form inseparable from the federal one.
+ *
+ * All three are OVERRIDES: blank takes the federal figure, so a reserve that
+ * matches federally needs no row here at all. An explicit `0` is a real answer.
+ *
+ * `insurancePolicyReserves` and `bankReserves` are Alberta-only kinds with no
+ * federal Part 2 equivalent, so federal always reads 0 for them and this slice
+ * is the only source of those figures.
+ */
+export const AlbertaReserve17Row = z
+  .object({
+    type: ReserveType.optional().describe(
+      'Which of the eight reserve kinds. Pairs this row to the federal reserve of the ' +
+        'same type — NOT by position.',
+    ),
+    opening: z
+      .number()
+      .optional()
+      .describe('017001/003/005/009/011/013/015/017 — balance at the beginning of the year.'),
+    transfer: z
+      .number()
+      .optional()
+      .describe('017031-047 — transfer on amalgamation or wind-up of subsidiary.'),
+    closing: z.number().optional().describe('017061-077 — balance at the end of the year.'),
+  })
+  .meta({ id: 'AlbertaReserve17Row' });
+
+export const AlbertaReserves17Values = z
+  .object({ rows: z.array(AlbertaReserve17Row).optional() })
+  .meta({ id: 'AlbertaReserves17Values' });
+
+/**
+ * AT1 Schedule 13 — ONE CCA class's Alberta figures.
+ *
+ * Paired to the federal CCA class BY `ccaClass`, the class number, which is
+ * the class's identity on both returns. Same reasoning as the reserves above:
+ * these used to be two extra fields on the federal `CcaClass`, which made the
+ * Alberta form unable to exist as a schedule of its own.
+ *
+ * Alberta permits a different discretionary CCA claim from federal — a
+ * corporation may claim a class federally and not provincially, or the
+ * reverse. Filing Schedule 13 requires jacket line 000060 or 000061 to be
+ * "yes"; TRA forbids the schedule outright when the return declares no
+ * divergence.
+ */
+export const AlbertaCca13Row = z
+  .object({
+    ccaClass: z
+      .string()
+      .optional()
+      .describe(
+        'The class number. Pairs this row to the federal CCA class of the same number — ' +
+          'NOT by position.',
+      ),
+    openingUCC: z
+      .number()
+      .optional()
+      .describe('013003 — Alberta opening UCC, when it differs from federal. Blank = federal.'),
+    claim: z
+      .number()
+      .optional()
+      .describe(
+        '013019 — the Alberta discretionary claim. Blank = the same as federal; an ' +
+          'explicit 0 claims nothing for Alberta, which is a real answer.',
+      ),
+  })
+  .meta({ id: 'AlbertaCca13Row' });
+
+export const AlbertaCca13Values = z
+  .object({ classes: z.array(AlbertaCca13Row).optional() })
+  .meta({ id: 'AlbertaCca13Values' });
+
+/**
  * AT1 Schedule 16 — the Alberta SR&ED **expenditure pool**.
  *
  * Not the SR&ED investment tax credit (federal Schedule 31) and not the
@@ -1603,3 +1683,7 @@ export type CfreCountryRegularRow = z.infer<typeof CfreCountryRegularRow>;
 export type CfreCountrySuccessorRow = z.infer<typeof CfreCountrySuccessorRow>;
 export type AlbertaResourceDeductions15Values = z.infer<typeof AlbertaResourceDeductions15Values>;
 export type AlbertaSred16Values = z.infer<typeof AlbertaSred16Values>;
+export type AlbertaReserve17Row = z.infer<typeof AlbertaReserve17Row>;
+export type AlbertaReserves17Values = z.infer<typeof AlbertaReserves17Values>;
+export type AlbertaCca13Row = z.infer<typeof AlbertaCca13Row>;
+export type AlbertaCca13Values = z.infer<typeof AlbertaCca13Values>;
