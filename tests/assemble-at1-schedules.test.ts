@@ -707,12 +707,46 @@ describe('runAT1Compute — Schedule 29 page 3 (the Agreement Among Associated C
     const sch29 = out.schedulePayloads?.find((s) => s.scheduleId === '029');
     const byId = new Map(sch29?.values.map((v) => [v.lineItemId, v.value]) ?? []);
     expect(byId.get('029200001')).toBe('A-CAN');
-    // 220 is the Federal Business Number, not the member's name — the form has
-    // no line for a name at all, and this UI does not collect an FBN, so 220
-    // is never filed. 230 (Alberta CAN) is what proves claimant-first ordering.
+    /*
+     * 220 is the Federal Business Number, not the member's name — the form has
+     * no line for a name at all.
+     *
+     * This assertion used to read `expect(byId.has('029220001')).toBe(false)`,
+     * justified as "this UI does not collect an FBN, so 220 is never filed".
+     * That was true and is no longer: `IegAgreementMember.fbn` now exists and
+     * `assembleIegAgreement` passes it. The fixture above still omits it, so
+     * the ABSENCE is what is asserted here — an omitted FBN must stay omitted
+     * rather than fall back to the name, which is the wrong-box filing this
+     * whole line has a history of. The next test supplies one.
+     */
     expect(byId.has('029220001')).toBe(false);
     expect(byId.get('029230001')).toBe('A-CAN'); // claimant first
     expect(byId.get('029325001')).toBe(280_000); // claimant's own allocated allowed amount
+  });
+
+  it('files each member’s FBN at line 220 once one is entered', () => {
+    // The engine, the compute and `schedule29Values` have all supported this
+    // since the schedule was built; nothing on the contract fed it, so every
+    // associated return filed page 3 with its first numbered column empty.
+    const withFbn = {
+      ...riWithAgreement,
+      albertaIeg: {
+        ...riWithAgreement.albertaIeg,
+        agreementMembers: [
+          { ...riWithAgreement.albertaIeg.agreementMembers[0], fbn: '123456789RC0001' },
+          { ...riWithAgreement.albertaIeg.agreementMembers[1], fbn: '987654321RC0001' },
+        ],
+      },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, withFbn, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch29 = out.schedulePayloads?.find((s) => s.scheduleId === '029');
+    const byId = new Map(sch29?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    // Occurrence order is entry order, claimant first — same as 230 above.
+    expect(byId.get('029220001')).toBe('123456789RC0001');
+    expect(byId.get('029220002')).toBe('987654321RC0001');
+    // And the name never reaches a filed line, whatever else is entered.
+    expect([...byId.values()]).not.toContain('A');
   });
 
   it('keeps filing line 112 when the group exists but no agreement was entered', () => {

@@ -1329,7 +1329,17 @@ function assembleIegAgreement(iegInput: AlbertaIegValues): IegAgreementInput {
     members: members.map((m, i) => {
       const hasAlbertaPermanentEstablishment = yesNoOrUndefined(m.hasAlbertaPermanentEstablishment);
       return {
+        // Ours, for the UI's own row label — line 220 is the FBN below, and
+        // `schedule29Values` has never filed this. See the contract's comment.
         name: m.name || `Member ${i + 1}`,
+        /*
+         * Line 220. The engine has supported this end to end since the
+         * schedule was built — `IegAgreementMemberInput.federalBusinessNumber`
+         * in ca-tax, through the compute, to `put('220', …)` — but no field on
+         * this contract ever fed it, so every associated return filed page 3
+         * with its first numbered column empty. The only missing link was here.
+         */
+        ...(m.fbn ? { federalBusinessNumber: m.fbn } : {}),
         ...(m.albertaCan ? { albertaCan: m.albertaCan } : {}),
         ...(m.currentTaxationYearEnd ? { currentTaxationYearEnd: m.currentTaxationYearEnd } : {}),
         allocatedExpenditureLimit: num(m.allocatedExpenditureLimit),
