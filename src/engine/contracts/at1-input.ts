@@ -545,7 +545,25 @@ export const IegGroupMember = z
  */
 export const IegAgreementMember = z
   .object({
+    /*
+     * NOT a line on the form. Schedule 29 page 3 numbers ten columns and none
+     * of them is a corporation name — `fbn` at line 220 is how the page
+     * identifies a member. Kept anyway because a table of nine-digit numbers is
+     * unreadable and every row here needs a label a preparer recognises; it is
+     * this product's own field, and `schedule29Values` must never file it.
+     *
+     * A prior version did exactly that — filed this free-text name at line 220
+     * — which is a wrong-box filing against a real TRA field. See
+     * `AT1_SCHEDULE_29.provenance` for how it was caught.
+     */
     name: z.string().optional(),
+    fbn: z
+      .string()
+      .optional()
+      .describe(
+        'Line 220 — this member’s federal Business Number. The identifier the page ' +
+          'itself uses for a member; `name` above is ours and is not filed.',
+      ),
     albertaCan: z.string().optional().describe('Alberta Corporate Account Number.'),
     currentTaxationYearEnd: z
       .string()

@@ -13,15 +13,51 @@
  *
  *   npx tsx scripts/emit-return-input.ts
  */
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { compile, type JSONSchema } from 'json-schema-to-typescript';
 import { z } from 'zod';
 import { AT1_DISPOSITION_CATEGORY_VALUES, RESERVE_TYPE_VALUES } from '../src/engine/contracts/t2-input.js';
 import { ReturnInputSchema } from '../src/engine/contracts/return-input.js';
 
-const DEST =
-  '../../web/app/dashboard/engagements/[id]/return/_lib/return-input.ts';
+const EMIT_PATH = 'app/dashboard/engagements/[id]/return/_lib/return-input.ts';
+
+/**
+ * Candidate sibling directory names for the web repo, in preference order.
+ *
+ * These three repos were split out of one monorepo (`apps/server` + `apps/web`
+ * + `packages/ca-tax`) and this script's destination was a hard-coded
+ * `../../web/app/…`. Checked out as independent repos — which is how they are
+ * cloned now — that resolves to a `web/` directory that does not exist, so the
+ * emitter wrote nothing and `tests/return-input-drift.test.ts` failed with
+ * ENOENT on every run. The failure looked like drift and was not: there was no
+ * file to compare against.
+ *
+ * A list rather than one path because both layouts are real and in use. Set
+ * `RETURN_INPUT_DEST` to an absolute path to override entirely.
+ */
+const WEB_DIR_CANDIDATES = ['TaxFoundry-fe', 'web'];
+
+/**
+ * Where the generated file goes — resolved, not assumed.
+ *
+ * Throws rather than guessing: a silent miss here means the contract and the
+ * interface's copy of it diverge with nothing failing, which is exactly what
+ * the drift test exists to prevent.
+ */
+export function resolveDest(): URL {
+  const override = process.env.RETURN_INPUT_DEST;
+  if (override) return pathToFileURL(override);
+  for (const dir of WEB_DIR_CANDIDATES) {
+    const candidate = new URL(`../../${dir}/${EMIT_PATH}`, import.meta.url);
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    `Cannot find the web repo. Looked for ${WEB_DIR_CANDIDATES.map((d) => `../../${d}/`).join(
+      ' and ',
+    )} beside this one. Set RETURN_INPUT_DEST to the absolute path of ${EMIT_PATH}.`,
+  );
+}
 
 const HEADER = `/**
  * The working return — the shape persisted on \`engagement.returnInput\`.
@@ -102,8 +138,9 @@ export async function emitReturnInput(): Promise<string> {
 
 async function main() {
   const out = await emitReturnInput();
-  writeFileSync(new URL(DEST, import.meta.url), out);
-  console.log(`ReturnInput: written to ${DEST}`);
+  const dest = resolveDest();
+  writeFileSync(dest, out);
+  console.log(`ReturnInput: written to ${dest.pathname}`);
 }
 
 // Only run when invoked directly (`npx tsx scripts/emit-return-input.ts`),

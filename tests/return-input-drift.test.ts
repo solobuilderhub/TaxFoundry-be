@@ -11,14 +11,21 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { emitReturnInput } from '../scripts/emit-return-input.js';
+import { emitReturnInput, resolveDest } from '../scripts/emit-return-input.js';
 
-const CHECKED_IN = new URL(
-  '../../web/app/dashboard/engagements/[id]/return/_lib/return-input.ts',
-  import.meta.url,
-);
+/*
+ * Resolved by the emitter, not restated here.
+ *
+ * This was its own hard-coded `../../web/app/…`, which meant the test and the
+ * script it guards could disagree about which file they were talking about —
+ * and did: checked out as independent repos rather than the monorepo they were
+ * split from, `web/` does not exist and this failed with ENOENT on every run.
+ * A drift test that cannot find the file it compares is worse than no test,
+ * because the red looks like drift.
+ */
+const CHECKED_IN = resolveDest();
 
-describe('apps/web return-input.ts is in step with the ReturnInput contract', () => {
+describe('the web app return-input.ts is in step with the ReturnInput contract', () => {
   it('matches a fresh emit exactly', async () => {
     const onDisk = readFileSync(CHECKED_IN, 'utf8');
     const fresh = await emitReturnInput();
