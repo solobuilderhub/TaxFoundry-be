@@ -480,8 +480,11 @@ describe("Schedule 21 — the Alberta opening balance survives, not federal's", 
         reportsDifferentAlbertaIncome: 'no',
         electsDifferentDiscretionaryAmounts: 'yes',
       },
-      cca: {
-        classes: [{ ccaClass: '13', albertaClaim: 15_000 }], // Alberta claims the full opening UCC
+      // AT1 Schedule 13's own slice, paired to the federal class by number.
+      // This was `cca.classes[].albertaClaim` until the Alberta columns moved
+      // out of the federal slice so the schedule could have its own nav entry.
+      albertaCca13: {
+        classes: [{ ccaClass: '13', claim: 15_000 }], // Alberta claims the full opening UCC
       },
       albertaContinuity: {
         nonCapitalOpening: 0,
@@ -527,21 +530,20 @@ describe('runAT1Compute — Schedule 17 reserves take an Alberta override, per r
     // which carries them through from `ri.reserves.rows` unchanged) — this test
     // supplies `fed` directly, as the rest of this file does, so the override
     // goes straight onto the row rather than through a separate `ri` slice.
-    const fedWithReserveOverride = {
+    const fedWithReserve = {
       ...fed,
-      reserveContinuity: [
-        {
-          type: 'doubtfulDebts',
-          opening: 5_000,
-          transfer: 0,
-          closing: 8_000,
-          albertaClosing: 12_000,
-        },
-      ],
+      reserveContinuity: [{ type: 'doubtfulDebts', opening: 5_000, transfer: 0, closing: 8_000 }],
     };
-    const engineInput = assembleProvincialInput('AT1', fedWithReserveOverride, riWithDivergence, {
-      isCcpc: true,
-    });
+    const engineInput = assembleProvincialInput(
+      'AT1',
+      fedWithReserve,
+      {
+        ...riWithDivergence,
+        // AT1 Schedule 17's own slice now, paired to the federal row by type.
+        albertaReserves17: { rows: [{ type: 'doubtfulDebts', closing: 12_000 }] },
+      },
+      { isCcpc: true },
+    );
     const out = runAT1Compute(engineInput);
     const sch17 = out.schedulePayloads?.find((s) => s.scheduleId === '017');
     const byId = new Map(sch17?.values.map((v) => [v.lineItemId, v.value]) ?? []);
@@ -550,16 +552,17 @@ describe('runAT1Compute — Schedule 17 reserves take an Alberta override, per r
   });
 
   it('files an Alberta-only reserve kind (bank reserves) that has no federal Part 2 line at all', () => {
-    const fedWithBankRow = {
-      ...fed,
-      reserveContinuity: [
-        ...fed.reserveContinuity,
-        { type: 'bankReserves', opening: 0, transfer: 0, closing: 0, albertaClosing: 25_000 },
-      ],
-    };
-    const engineInput = assembleProvincialInput('AT1', fedWithBankRow, riWithDivergence, {
-      isCcpc: true,
-    });
+    // No federal row for bank reserves AT ALL — the kind has no federal Part 2
+    // line, so the Alberta entry is the only source and the row must still file.
+    const engineInput = assembleProvincialInput(
+      'AT1',
+      fed,
+      {
+        ...riWithDivergence,
+        albertaReserves17: { rows: [{ type: 'bankReserves', closing: 25_000 }] },
+      },
+      { isCcpc: true },
+    );
     const out = runAT1Compute(engineInput);
     const sch17 = out.schedulePayloads?.find((s) => s.scheduleId === '017');
     const byId = new Map(sch17?.values.map((v) => [v.lineItemId, v.value]) ?? []);
@@ -1147,5 +1150,119 @@ describe('assembleProvincialInput(AT1) — Schedule 16, the SR&ED pool', () => {
       { isCcpc: true },
     ) as { schedules?: { scientificResearch?: { amountClaimed?: number } } };
     expect(engineInput.schedules?.scientificResearch?.amountClaimed).toBe(200_000);
+  });
+});
+
+/**
+ * The Alberta columns of Schedules 13 and 17 moved OUT of the federal slices
+ * into their own, so each could become a real schedule with its own nav entry.
+ *
+ * They were `cca.classes[].albertaOpeningUCC/albertaClaim` and
+ * `reserves.rows[].albertaOpening/albertaTransfer/albertaClosing` — one
+ * `ReturnInput` key holding two jurisdictions' forms. The registry pins one
+ * nav entry per key, so Alberta S13/S17 could only ever be a second grid
+ * inside a federal entry, which is how a preparer came to look for them and
+ * find neither.
+ *
+ * Pairing is BY IDENTITY, not position: reserve `type` (a fixed enum of the
+ * eight printed kinds) and `ccaClass` (the class number). The two arrays are
+ * independent lists — a preparer overriding one class sends one row — so a
+ * positional pairing would attach Alberta figures to the wrong federal row.
+ */
+
+/**
+ * The Alberta columns of Schedules 13 and 17 moved OUT of the federal slices
+ * into their own, so each could become a real schedule with its own nav entry.
+ *
+ * They were `cca.classes[].albertaOpeningUCC/albertaClaim` and
+ * `reserves.rows[].albertaOpening/albertaTransfer/albertaClosing` — one
+ * `ReturnInput` key holding two jurisdictions' forms. The registry pins one nav
+ * entry per key, so Alberta S13/S17 could only ever be a second grid inside a
+ * federal entry, which is how a preparer came to look for them and find
+ * neither.
+ *
+ * Pairing is BY IDENTITY, never position: `ccaClass` (the class number) and
+ * reserve `type` (a fixed enum of the eight printed kinds). The two arrays are
+ * independent lists — a preparer overriding one class sends one row — so a
+ * positional pairing would attach Alberta figures to the wrong federal row.
+ */
+describe('AT1 S13 reads its own slice, paired by class number', () => {
+  it('applies the override to the named class, not the first one', () => {
+    const fedTwoClasses = {
+      ...fed,
+      ccaClasses: [
+        { ccaClass: '8', openingUCC: 100_000, additions: 0 },
+        { ccaClass: '10', openingUCC: 50_000, additions: 0 },
+      ],
+    };
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        fedTwoClasses,
+        {
+          ...riWithDivergence,
+          // Only class 10 diverges, and it is the SECOND federal class — a
+          // positional pairing would put this on class 8.
+          albertaCca13: { classes: [{ ccaClass: '10', claim: 0 }] },
+        },
+        { isCcpc: true },
+      ),
+    );
+    const sch13 = out.schedulePayloads?.find((s) => s.scheduleId === '013');
+    const classNumbers = (sch13?.values ?? [])
+      .filter((v) => v.lineItemId.startsWith('013001'))
+      .map((v) => String(v.value));
+    // Both classes are on the schedule…
+    expect(classNumbers).toContain('10');
+    // …and the Alberta claim of 0 landed on class 10's occurrence, whichever
+    // occurrence that is. An explicit 0 is a real answer ("claim nothing for
+    // Alberta"), so it must survive rather than be dropped as absent.
+    const tenAt = (sch13?.values ?? []).find(
+      (v) => v.lineItemId.startsWith('013001') && String(v.value) === '10',
+    );
+    const occurrence = tenAt?.lineItemId.slice(-3);
+    expect(occurrence).toBeDefined();
+    expect((sch13?.values ?? []).find((v) => v.lineItemId === `013019${occurrence}`)?.value).toBe(
+      0,
+    );
+  });
+});
+
+
+/**
+ * The Alberta figures come from `ri.albertaReserves17` and default from federal
+ * where a cell is left blank. Pairing is BY `type` — the fixed enum of the
+ * eight printed kinds — never by position, so reordering either list cannot
+ * attach an Alberta figure to the wrong reserve.
+ */
+describe('AT1 S17 reads its own slice, paired by reserve type', () => {
+  it('applies the override to the named kind, leaving the others at federal', () => {
+    const fedTwoKinds = {
+      ...fed,
+      reserveContinuity: [
+        { type: 'prepaidRent', opening: 1_000, transfer: 0, closing: 2_000 },
+        { type: 'doubtfulDebts', opening: 5_000, transfer: 0, closing: 8_000 },
+      ],
+    };
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        fedTwoKinds,
+        {
+          ...riWithDivergence,
+          // Second federally, and the only Alberta row — matched on type, so
+          // neither list's order can misattribute it.
+          albertaReserves17: { rows: [{ type: 'doubtfulDebts', closing: 12_000 }] },
+        },
+        { isCcpc: true },
+      ),
+    );
+    const byId = new Map(
+      out.schedulePayloads
+        ?.find((x) => x.scheduleId === '017')
+        ?.values.map((v) => [v.lineItemId, v.value]) ?? [],
+    );
+    expect(byId.get('017061001')).toBe(12_000); // doubtful debts — overridden
+    expect(byId.get('017065001')).toBe(2_000); // prepaid rent — still federal
   });
 });

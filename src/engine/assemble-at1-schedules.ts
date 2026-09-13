@@ -68,6 +68,7 @@ import { assembleSchedule15 } from './at1-schedule-composers/schedule-15-compose
 import { assembleSchedule16 } from './at1-schedule-composers/schedule-16-compose.js';
 import type {
   AlbertaAssociatedCorpMember,
+  AlbertaCca13Row,
   AlbertaContinuityValues,
   AlbertaIegValues,
   AlbertaSbdValues,
@@ -104,14 +105,25 @@ function divergenceFlags(ab: AlbertaValues) {
  * whose Alberta CCA matches federal sends none and Schedule 13 stays absent.
  */
 function albertaCcaOverrides(ri: Ri) {
-  return (ri.cca?.classes ?? [])
-    .filter(
-      (c: CcaClass) => c?.ccaClass && (present(c.albertaOpeningUCC) || present(c.albertaClaim)),
-    )
-    .map((c: CcaClass) => ({
+  /*
+   * Read from `ri.albertaCca13`, AT1 Schedule 13's own slice.
+   *
+   * These were two extra fields on the FEDERAL `CcaClass`
+   * (`albertaOpeningUCC`, `albertaClaim`), which meant one `ReturnInput` key
+   * held both jurisdictions' forms — and since the registry pins one nav entry
+   * per key, Alberta Schedule 13 could only ever be a second grid inside
+   * federal Schedule 8's entry. It is its own schedule now.
+   *
+   * Rows pair to the federal classes by `ccaClass`, the class number, which is
+   * the class's identity on both returns. Not by position: the two arrays are
+   * independent lists and a preparer overriding only class 10 sends one row.
+   */
+  return (ri.albertaCca13?.classes ?? [])
+    .filter((c: AlbertaCca13Row) => c?.ccaClass && (present(c.openingUCC) || present(c.claim)))
+    .map((c: AlbertaCca13Row) => ({
       ccaClass: String(c.ccaClass),
-      ...(present(c.albertaOpeningUCC) ? { openingUCC: num(c.albertaOpeningUCC) } : {}),
-      ...(present(c.albertaClaim) ? { claim: num(c.albertaClaim) } : {}),
+      ...(present(c.openingUCC) ? { openingUCC: num(c.openingUCC) } : {}),
+      ...(present(c.claim) ? { claim: num(c.claim) } : {}),
     }));
 }
 
@@ -143,28 +155,61 @@ function scheduleThirteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
  * for those rows `federalReserves` always reads as 0 and the Alberta override
  * fields are effectively the only source of the figure.
  */
-function scheduleSeventeen(fed: Fed, ab: AlbertaValues) {
-  const rows = fed.reserveContinuity ?? [];
-  if (rows.length === 0) return undefined;
+/**
+ * AT1 Schedule 17 — its own schedule, still defaulting from federal.
+ *
+ * ── The two things that are now separate, and the one that is not ───────────
+ *
+ * The Alberta figures used to be three extra columns ON the federal reserve
+ * row (`reserves.rows[].albertaOpening/…`), which meant one `ReturnInput` key
+ * held both jurisdictions' forms. The registry pins one nav entry per key, so
+ * Alberta Schedule 17 could only ever be a second grid inside federal
+ * Schedule 13's entry — and a preparer looking for it under "AT1 only" found
+ * nothing at all.
+ *
+ * The FORM, the nav entry and the slice are separate now: overrides come from
+ * `ri.albertaReserves17`, keyed by reserve type. Nothing Alberta passes
+ * through `assemble-t2-input.ts` any more.
+ *
+ * The FIGURES still default from federal, deliberately. The schedule's own
+ * printed instruction is "required if the opening balance or the claim for
+ * Alberta purposes DIFFERS from that for federal purposes" — a blank Alberta
+ * cell means "same as federal", not "nil". Cutting that lineage too would stop
+ * Schedule 17 filing for every return whose reserves agree with federal, and
+ * removes 28 filed line items from the AB2-full-divergence certification
+ * recording; verified against that corpus, not reasoned about.
+ *
+ * A kind present only on the Alberta side still files: `insurancePolicyReserves`
+ * and `bankReserves` have no federal Part 2 line at all, so federal reads 0
+ * for them and the Alberta entry is the only source of the figure.
+ */
+function scheduleSeventeen(fed: Fed, ri: Ri, ab: AlbertaValues) {
   const federalReserves: Record<string, { opening: number; transfer: number; closing: number }> =
     {};
-  const albertaReserves: Record<string, { opening?: number; transfer?: number; closing?: number }> =
-    {};
-  for (const r of rows) {
+  for (const r of fed.reserveContinuity ?? []) {
     if (!r.type) continue;
     federalReserves[r.type] = {
       opening: num(r.opening),
       transfer: num(r.transfer),
       closing: num(r.closing),
     };
-    if (present(r.albertaOpening) || present(r.albertaTransfer) || present(r.albertaClosing)) {
-      albertaReserves[r.type] = {
-        ...(present(r.albertaOpening) ? { opening: num(r.albertaOpening) } : {}),
-        ...(present(r.albertaTransfer) ? { transfer: num(r.albertaTransfer) } : {}),
-        ...(present(r.albertaClosing) ? { closing: num(r.albertaClosing) } : {}),
-      };
-    }
   }
+
+  const albertaReserves: Record<string, { opening?: number; transfer?: number; closing?: number }> =
+    {};
+  for (const r of ri.albertaReserves17?.rows ?? []) {
+    if (!r?.type) continue;
+    if (!present(r.opening) && !present(r.transfer) && !present(r.closing)) continue;
+    albertaReserves[r.type] = {
+      ...(present(r.opening) ? { opening: num(r.opening) } : {}),
+      ...(present(r.transfer) ? { transfer: num(r.transfer) } : {}),
+      ...(present(r.closing) ? { closing: num(r.closing) } : {}),
+    };
+    // An Alberta-only kind has nothing to default from — give it a federal
+    // zero so the row exists, rather than dropping a reserve that was entered.
+    federalReserves[r.type] ??= { opening: 0, transfer: 0, closing: 0 };
+  }
+
   if (Object.keys(federalReserves).length === 0) return undefined;
   const result = computeAlbertaSchedule17({
     federalReserves,
@@ -1419,7 +1464,7 @@ export function assembleAt1Schedules(
   const ab = ri.alberta ?? {};
 
   const cca = scheduleThirteen(fed, ab, ri);
-  const reserves = scheduleSeventeen(fed, ab);
+  const reserves = scheduleSeventeen(fed, ri, ab);
   const dispositions = scheduleEighteen(fed, ab, ri);
   const lossCarryback = scheduleTen(federal, ri);
   const smallBusinessDeduction = scheduleOne(fed, ri, albertaTaxableIncome, defaultBusinessLimit);

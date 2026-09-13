@@ -20,24 +20,15 @@ export const CcaClass = z
       .number()
       .optional()
       .describe('Amount to claim; blank = the maximum. An explicit 0 claims nothing.'),
-    albertaOpeningUCC: z
-      .number()
-      .optional()
-      .describe(
-        'AT1 Schedule 13 — the Alberta figures for this class, when they diverge from ' +
-          'federal. Both are OVERRIDES: blank takes the federal figure, so a class that ' +
-          'matches federally needs nothing here. An explicit `0` is a real answer (claim ' +
-          'nothing for Alberta), not an absent one.\n\n' +
-          'Alberta permits a different discretionary CCA claim from federal — a corporation ' +
-          'may claim a class federally and not provincially, or the reverse. Filing these ' +
-          'requires jacket line 000060 or 000061 to be "yes"; TRA forbids Schedule 13 ' +
-          'outright when the return declares no divergence.\n\n' +
-          '013003 — Alberta opening UCC, when it differs from federal.',
-      ),
-    albertaClaim: z
-      .number()
-      .optional()
-      .describe('013019 — the Alberta discretionary claim. Blank = the same as federal.'),
+    /*
+     * The Alberta columns MOVED to `albertaCca13` (see at1-input.ts).
+     *
+     * They were `albertaOpeningUCC` and `albertaClaim` here, which made AT1
+     * Schedule 13 inseparable from federal Schedule 8: one slice, so one nav
+     * entry, so the Alberta form could only ever be a second grid inside the
+     * federal one. It now has its own schedule, and pairs back to these
+     * classes by `ccaClass`.
+     */
   })
   .meta({ id: 'CcaClass' });
 
@@ -181,9 +172,9 @@ export const NetIncomeValues = z
       .optional()
       .describe(
         'Schedule 1, keyed by CRA line number: { "104": 50000, "403": 55000 }.\n\n' +
-          "The line number is the transmission key, so storing it as the key means what the " +
-          "preparer typed is already in the shape the return is filed in. The former " +
-          "{ description, amount }[] shape reconciled on screen and could not be filed — a " +
+          'The line number is the transmission key, so storing it as the key means what the ' +
+          'preparer typed is already in the shape the return is filed in. The former ' +
+          '{ description, amount }[] shape reconciled on screen and could not be filed — a ' +
           "transmitted return has no field for a preparer's own wording.",
       ),
   })
@@ -227,7 +218,7 @@ export const LossesValues = z
       .describe('Carry a current-year loss back to prior years (up to 3).'),
     // Restricted classes — each may only offset a specific income base, so the
     // base is captured alongside the pool.
-    farmOpening: z.number().optional().describe("Farm loss, s.111(1)(d) — offsets any income."),
+    farmOpening: z.number().optional().describe('Farm loss, s.111(1)(d) — offsets any income.'),
     farmApplied: z.number().optional(),
     restrictedFarmOpening: z
       .number()
@@ -330,11 +321,16 @@ export const EifelValues = z
         }),
       )
       .optional()
-      .describe('Schedule 130 Part 1A — capacity received from eligible group entities (line 130).'),
+      .describe(
+        'Schedule 130 Part 1A — capacity received from eligible group entities (line 130).',
+      ),
     priorYearExcessCapacity: z
       .array(
         z.object({
-          yearsAgo: z.number().optional().describe('1, 2 or 3 — the form carries three years only.'),
+          yearsAgo: z
+            .number()
+            .optional()
+            .describe('1, 2 or 3 — the form carries three years only.'),
           excessCapacity: z.number().optional().describe('122'),
           previouslyTransferred: z.number().optional().describe('123 — under subsection 18.2(4)'),
           previouslyAbsorbed: z.number().optional().describe('124 — under subsection 18.2(2)'),
@@ -356,7 +352,10 @@ export const EifelValues = z
           authorityName: z.string().optional().describe('007'),
           principalAmount: z.number().optional().describe('008'),
           ifeIncurred: z.number().optional().describe('009'),
-          incomeFromFundedActivities: z.number().optional().describe('010 — reduces ATI (line 104)'),
+          incomeFromFundedActivities: z
+            .number()
+            .optional()
+            .describe('010 — reduces ATI (line 104)'),
           lossFromFundedActivities: z.number().optional().describe('011 — adds to ATI (line 092)'),
         }),
       )
@@ -451,10 +450,7 @@ export const EifelValues = z
         z.object({
           affiliateName: z.string().optional().describe('151'),
           amountInAffiliateFapi: z.number().optional().describe('152'),
-          specifiedParticipatingPercentage: z
-            .number()
-            .optional()
-            .describe('153 — as a FRACTION'),
+          specifiedParticipatingPercentage: z.number().optional().describe('153 — as a FRACTION'),
         }),
       )
       .optional()
@@ -532,8 +528,14 @@ export const SbdValues = z
       ),
     aaiiDetail: z
       .object({
-        taxableCapitalGains: z.number().optional().describe('705 — excludes active-asset dispositions'),
-        allowableCapitalLosses: z.number().optional().describe('710 — excludes active-asset dispositions'),
+        taxableCapitalGains: z
+          .number()
+          .optional()
+          .describe('705 — excludes active-asset dispositions'),
+        allowableCapitalLosses: z
+          .number()
+          .optional()
+          .describe('710 — excludes active-asset dispositions'),
         incomeFromProperty: z.number().optional().describe('715'),
         exemptIncome: z.number().optional().describe('720'),
         agriInvestFundReceived: z.number().optional().describe('725'),
@@ -580,9 +582,17 @@ const Class13LeaseholdLayer = z
     isFirstYear: z
       .boolean()
       .optional()
-      .describe('This is the layer’s first tax year — triggers the Reg 1100(2) UCC-ceiling reduction.'),
-    aiip: z.boolean().optional().describe('Accelerated investment incentive property — exempt from the 1100(2) reduction.'),
-    claimedToDate: z.number().optional().describe('CCA already claimed on this layer in prior years.'),
+      .describe(
+        'This is the layer’s first tax year — triggers the Reg 1100(2) UCC-ceiling reduction.',
+      ),
+    aiip: z
+      .boolean()
+      .optional()
+      .describe('Accelerated investment incentive property — exempt from the 1100(2) reduction.'),
+    claimedToDate: z
+      .number()
+      .optional()
+      .describe('CCA already claimed on this layer in prior years.'),
     proceeds: z.number().optional().describe('Disposition proceeds attributed to this layer.'),
   })
   .meta({ id: 'Class13LeaseholdLayer' });
@@ -608,14 +618,22 @@ export const CcaValues = z
     class13Layers: z
       .array(Class13LeaseholdLayer)
       .optional()
-      .describe('NEW class 13 leasehold-interest layers added this tax year (the full Schedule III mechanic).'),
-    class13OpeningUCC: z.number().optional().describe('Class 13 undepreciated capital cost before this year’s deduction.'),
+      .describe(
+        'NEW class 13 leasehold-interest layers added this tax year (the full Schedule III mechanic).',
+      ),
+    class13OpeningUCC: z
+      .number()
+      .optional()
+      .describe('Class 13 undepreciated capital cost before this year’s deduction.'),
     class13Claim: z.number().optional().describe('Class 13 amount to claim; blank = the maximum.'),
     class14Properties: z
       .array(Class14LimitedLifeProperty)
       .optional()
       .describe('NEW class 14 limited-life intangible properties added this tax year.'),
-    class14OpeningUCC: z.number().optional().describe('Class 14 undepreciated capital cost before this year’s deduction.'),
+    class14OpeningUCC: z
+      .number()
+      .optional()
+      .describe('Class 14 undepreciated capital cost before this year’s deduction.'),
     class14Claim: z.number().optional().describe('Class 14 amount to claim; blank = the maximum.'),
   })
   .meta({ id: 'CcaValues' });
@@ -716,27 +734,27 @@ export const ReserveType = z.enum(RESERVE_TYPE_VALUES).meta({ id: 'ReserveType' 
 export const ReserveRow = z
   .object({
     type: ReserveType.optional(),
-    opening: z.number().optional().describe('Balance at the beginning of the year (reversed into income).'),
-    transfer: z.number().optional().describe('Transfer on an amalgamation / wind-up of a subsidiary.'),
-    closing: z.number().optional().describe('Balance at the end of the year (deducted this year).'),
-    albertaOpening: z
+    opening: z
       .number()
       .optional()
-      .describe(
-        'AT1 Schedule 17 — the Alberta figures for this reserve, when they diverge from ' +
-          'federal. All three are OVERRIDES: blank takes the federal figure, so a reserve ' +
-          'that matches federally needs nothing here. An explicit `0` is a real answer, not ' +
-          'an absent one. For `insurancePolicyReserves` / `bankReserves` — Alberta-only ' +
-          'kinds with no federal Part 2 equivalent — federal always reads as 0, so these ' +
-          'three fields are effectively the only source of the figure.',
-      ),
-    albertaTransfer: z.number().optional(),
-    albertaClosing: z.number().optional(),
+      .describe('Balance at the beginning of the year (reversed into income).'),
+    transfer: z
+      .number()
+      .optional()
+      .describe('Transfer on an amalgamation / wind-up of a subsidiary.'),
+    closing: z.number().optional().describe('Balance at the end of the year (deducted this year).'),
+    /*
+     * The Alberta columns MOVED to `albertaReserves17` (see at1-input.ts) —
+     * same reason as the CCA class above. They pair back to these rows by
+     * `type`.
+     */
   })
   .meta({ id: 'ReserveRow' });
 
 /** Schedule 13 — continuity of reserves (Part 2, other reserves). */
-export const ReservesValues = z.object({ rows: z.array(ReserveRow).optional() }).meta({ id: 'ReservesValues' });
+export const ReservesValues = z
+  .object({ rows: z.array(ReserveRow).optional() })
+  .meta({ id: 'ReservesValues' });
 
 /** Schedule 33 — taxable capital employed in Canada (balance-sheet detail). */
 export const CapitalValues = z

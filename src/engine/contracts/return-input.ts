@@ -29,11 +29,13 @@
  */
 import { z } from 'zod';
 import {
+  AlbertaCca13Values,
   AlbertaContinuityValues,
   AlbertaDonationsValues,
   AlbertaForeignInvestment4Values,
   AlbertaIegValues,
   AlbertaOtherCredits3Values,
+  AlbertaReserves17Values,
   AlbertaResourceDeductions15Values,
   AlbertaSbdValues,
   AlbertaSchedule12Values,
@@ -103,6 +105,8 @@ export const ReturnInputSchema = z
     albertaSchedule18: AlbertaSchedule18Values.optional(),
     albertaResourceDeductions15: AlbertaResourceDeductions15Values.optional(),
     albertaSred16: AlbertaSred16Values.optional(),
+    albertaReserves17: AlbertaReserves17Values.optional(),
+    albertaCca13: AlbertaCca13Values.optional(),
   })
   .meta({ id: 'ReturnInput' })
   // Forward-compatible: apps/web and apps/server deploy independently, so a

@@ -27,9 +27,13 @@ import type {
   ReserveContinuityRow,
   Schedule12ResourceDeductionsInput,
 } from '@classytic/ca-tax/t2';
-import { leaseholdPeriods } from '@classytic/ca-tax/t2';
-import { dividendsDeductibleS112, SCHEDULE_1_LINE_BY_NUMBER } from '@classytic/ca-tax/t2';
+import {
+  dividendsDeductibleS112,
+  leaseholdPeriods,
+  SCHEDULE_1_LINE_BY_NUMBER,
+} from '@classytic/ca-tax/t2';
 import type {
+  AlbertaReserve17Row,
   At1DispositionCategory,
   CcaClass,
   Class13LeaseholdLayer,
@@ -335,10 +339,8 @@ function eifelFacts(ri: Ri) {
   if (e.adjustedTaxableIncome != null) facts.adjustedTaxableIncome = num(e.adjustedTaxableIncome);
   if (e.hasGroupRatioElection != null) facts.hasGroupRatioElection = e.hasGroupRatioElection;
   if (e.groupRatioAmount != null) facts.groupRatioAmount = num(e.groupRatioAmount);
-  if (e.rifeFromPreviousYears != null)
-    facts.rifeFromPreviousYears = num(e.rifeFromPreviousYears);
-  if (e.partnershipIfeAddBack != null)
-    facts.partnershipIfeAddBack = num(e.partnershipIfeAddBack);
+  if (e.rifeFromPreviousYears != null) facts.rifeFromPreviousYears = num(e.rifeFromPreviousYears);
+  if (e.partnershipIfeAddBack != null) facts.partnershipIfeAddBack = num(e.partnershipIfeAddBack);
   const received = (e.receivedCapacity ?? []).filter((r) => r?.amount != null);
   if (received.length > 0)
     facts.receivedCapacity = received.map((r) => ({
@@ -360,7 +362,10 @@ function eifelFacts(ri: Ri) {
   // Each keeps only rows that carry a real figure, so a blank row left behind
   // by the array editor contributes nothing.
   const exemptIfe = (e.exemptIfe ?? []).filter(
-    (r) => r?.ifeIncurred != null || r?.incomeFromFundedActivities != null || r?.lossFromFundedActivities != null,
+    (r) =>
+      r?.ifeIncurred != null ||
+      r?.incomeFromFundedActivities != null ||
+      r?.lossFromFundedActivities != null,
   );
   if (exemptIfe.length > 0)
     facts.exemptIfe = exemptIfe.map((r) => ({
@@ -372,7 +377,10 @@ function eifelFacts(ri: Ri) {
     }));
 
   const borrowings = (e.borrowings ?? []).filter(
-    (r) => r?.interestPaidOrPayable != null || r?.fundingCostAmounts != null || r?.costReducingAmounts != null,
+    (r) =>
+      r?.interestPaidOrPayable != null ||
+      r?.fundingCostAmounts != null ||
+      r?.costReducingAmounts != null,
   );
   if (borrowings.length > 0)
     facts.borrowings = borrowings.map((r) => ({
@@ -444,7 +452,9 @@ function eifelFacts(ri: Ri) {
       specifiedParticipatingPercentage: num(r.specifiedParticipatingPercentage),
     }));
 
-  const clause95Included = (e.clause95Included ?? []).filter((r) => r?.amountInAffiliateFapi != null);
+  const clause95Included = (e.clause95Included ?? []).filter(
+    (r) => r?.amountInAffiliateFapi != null,
+  );
   if (clause95Included.length > 0)
     facts.clause95Included = clause95Included.map((r) => ({
       ...(r.affiliateName ? { affiliateName: r.affiliateName } : {}),
@@ -452,8 +462,10 @@ function eifelFacts(ri: Ri) {
       specifiedParticipatingPercentage: num(r.specifiedParticipatingPercentage),
     }));
 
-  if (e.ifeDetail && Object.values(e.ifeDetail).some((v) => v != null)) facts.ifeDetail = e.ifeDetail;
-  if (e.ifrDetail && Object.values(e.ifrDetail).some((v) => v != null)) facts.ifrDetail = e.ifrDetail;
+  if (e.ifeDetail && Object.values(e.ifeDetail).some((v) => v != null))
+    facts.ifeDetail = e.ifeDetail;
+  if (e.ifrDetail && Object.values(e.ifrDetail).some((v) => v != null))
+    facts.ifrDetail = e.ifrDetail;
 
   return Object.keys(facts).length > 0 ? { eifel: facts } : {};
 }
@@ -594,26 +606,26 @@ function scheduleTwentyOne(ri: Ri) {
  * straight off `fed.reserveContinuity` without a second federal→AT1 lookup.
  */
 function scheduleThirteen(ri: Ri) {
-  const present = (v: unknown): boolean => v != null && v !== '';
+  /*
+   * FEDERAL ONLY.
+   *
+   * Three Alberta columns used to ride along on each row — `albertaOpening`,
+   * `albertaTransfer`, `albertaClosing` — purely so AT1 Schedule 17 could read
+   * its figures off `fed.reserveContinuity` without a second lookup. That
+   * convenience is exactly what made Alberta Schedule 17 impossible to give a
+   * nav entry of its own: one `ReturnInput` key held both jurisdictions'
+   * forms, and the registry pins one entry per key.
+   *
+   * AT1 Schedule 17 is a standalone schedule now, reading `ri.albertaReserves17`
+   * directly — see `assembleSchedule17`. No Alberta figure passes through here.
+   */
   const rows = (ri.reserves?.rows ?? [])
-    .filter(
-      (r: ReserveRow) =>
-        r?.type ||
-        r?.opening ||
-        r?.transfer ||
-        r?.closing ||
-        present(r?.albertaOpening) ||
-        present(r?.albertaTransfer) ||
-        present(r?.albertaClosing),
-    )
+    .filter((r: ReserveRow) => r?.type || r?.opening || r?.transfer || r?.closing)
     .map((r: ReserveRow) => ({
       type: r.type,
       opening: num(r.opening),
       transfer: num(r.transfer),
       closing: num(r.closing),
-      ...(present(r.albertaOpening) ? { albertaOpening: num(r.albertaOpening) } : {}),
-      ...(present(r.albertaTransfer) ? { albertaTransfer: num(r.albertaTransfer) } : {}),
-      ...(present(r.albertaClosing) ? { albertaClosing: num(r.albertaClosing) } : {}),
     }));
   return rows.length ? { reserveContinuity: rows } : {};
 }
