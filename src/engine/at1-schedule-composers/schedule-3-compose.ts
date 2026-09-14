@@ -35,7 +35,7 @@
  *   apitcThirdToTenthAvailable, apitcThirdToTenthApplied,
  *   apitcExpired                                                    (APITC)
  */
-import { computeSchedule3, type Schedule3Result } from '@classytic/ca-tax/t2';
+import type { Schedule3Input } from '@classytic/ca-tax/t2';
 import type { AlbertaOtherCredits3Values, ReturnInput } from '../return-input-contract.js';
 
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
@@ -48,7 +48,17 @@ const present = (v: unknown): boolean => v != null && v !== '';
  * Schedule 3 to file, matching the `undefined`-return pattern the rest of
  * `assemble-at1-schedules.ts` uses (e.g. `scheduleTwenty`, `scheduleTen`).
  */
-export function assembleSchedule3(ri: ReturnInput): Schedule3Result | undefined {
+/**
+ * The credits only — the engine derives the ceiling.
+ *
+ * Identity, so the object literal below is checked against the shape the
+ * pipeline accepts. Returning `Schedule3Result` was what required computing
+ * here, which in turn required a room to compute WITH; there is nothing to
+ * compute at this layer any more.
+ */
+const buildSchedule3Credits = (c: Omit<Schedule3Input, 'mad'>): Omit<Schedule3Input, 'mad'> => c;
+
+export function assembleSchedule3(ri: ReturnInput): Omit<Schedule3Input, 'mad'> | undefined {
   const s3: AlbertaOtherCredits3Values = ri.albertaOtherCredits3 ?? {};
 
   const hasItc =
@@ -67,14 +77,28 @@ export function assembleSchedule3(ri: ReturnInput): Schedule3Result | undefined 
 
   if (!hasItc && !hasCitc && !hasApitc) return undefined; // nothing to file
 
-  return computeSchedule3({
-    mad: {
-      taxPayableBeforeDeduction: num(s3.taxPayableBeforeDeduction),
-      line070: num(s3.line070),
-      line071: num(s3.line071),
-      line072: num(s3.line072),
-      line074: num(s3.line074),
-    },
+  /*
+   * No `mad`. Schedule 3's shared ceiling is derived by the ENGINE, after it
+   * has computed the Alberta tax — see `SCHEDULE_3_ROOM` in ca-tax's
+   * `alberta-return.ts`.
+   *
+   * This composer used to build it from five money fields a preparer typed on
+   * the Schedule 3 form: `taxPayableBeforeDeduction`, `line070`, `line071`,
+   * `line072`, `line074`. Three of those are not the preparer's to give — the
+   * AT1 jacket types 068 as `computed` and 070/072 as `carried-in` from
+   * Schedules 1 and 4, all of which this engine already produces. So a return
+   * could claim 068 = 100,000 on Schedule 3 while transmitting 85,000 on the
+   * jacket, and the deduction at 604 — and the jacket's own 076, which takes
+   * it — would both be computed from a figure the return does not contain.
+   *
+   * The two that ARE the preparer's (071 Manufacturing and Processing Profits,
+   * 074 Political Contributions) moved to the jacket where the form puts them;
+   * `assembleProvincialInput` forwards them as
+   * `manufacturingDeduction` / `politicalContributionsTaxCredit`.
+   *
+   * `Omit<Schedule3Input, 'mad'>` makes passing one back a compile error.
+   */
+  return buildSchedule3Credits({
     ...(hasItc
       ? {
           itc: {
