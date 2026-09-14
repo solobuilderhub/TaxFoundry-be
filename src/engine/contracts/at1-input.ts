@@ -33,6 +33,22 @@ export const AlbertaValues = z
       .number()
       .optional()
       .describe('000048 — total assets. Must equal federal GIFI 2599.'),
+    manufacturingDeduction: z
+      .number()
+      .optional()
+      .describe(
+        '000071 — Alberta Manufacturing and Processing Profits Deduction. A genuine ' +
+          'preparer figure: `input` on the jacket, and nothing computes it. Read by TWO ' +
+          'things — the jacket payload and Schedule 3’s shared ceiling — which is why it ' +
+          'lives here and not on Schedule 3, where a second copy could disagree with it.',
+      ),
+    politicalContributionsTaxCredit: z
+      .number()
+      .optional()
+      .describe(
+        '000074 — Alberta Political Contributions Tax Credit. `input` on the jacket, same ' +
+          'reasoning as `manufacturingDeduction` above.',
+      ),
     associatedWithCcpcs: YesNo.optional().describe(
       '000001 — associated with one or more Canadian-controlled private corporations? Not derived ' +
         "from Schedule 1's own association test: that derivation is undefined whenever the " +
@@ -673,6 +689,128 @@ export const IegJurisdictionAmount = z
   .meta({ id: 'IegJurisdictionAmount' });
 
 /**
+ * One row of a Schedule 3 carry-forward-by-year-of-origin table.
+ *
+ * Pages 2 and 3 of AT1 Schedule 3 carry three of these tables — Investor Tax
+ * Credit (lines 120-130), Capital Investment Tax Credit (220-230) and
+ * Agri-processing Investment Tax Credit (330-340). `yearIndex` is the page's
+ * own "Year of origin" value: 0 is the current taxation year, 1 the 1st
+ * preceding, and so on, up to 4 for the ITC table and 10 for the other two.
+ *
+ * ── Why these are entered and not computed ──────────────────────────────────
+ *
+ * `computeSchedule3` produces the aggregates on page 1 and deliberately does
+ * not split them by vintage. Its own doc comment gives the reason for ITC and
+ * CITC: the specification states no allocation rule and no percentage cap for
+ * those two, so every business rule on their detail lines is a reconciliation
+ * back to figures it already computes — deriving a split would be inventing
+ * one. APITC's vintages the engine does model internally, but it files only
+ * the aggregates at 304/306/308/310.
+ *
+ * So a corporation filing the detail pages supplies the split, which is what
+ * the engine's own comment says it expects ("a caller filing the AITC/ACITC
+ * detail pages supplies that per-vintage split itself").
+ *
+ * ── The fields differ per table, and that is the page ───────────────────────
+ *
+ * One row type covers all three because the shapes are so close, but two
+ * things are NOT uniform and a consumer must not assume they are:
+ *
+ *   - The APITC table orders its columns received-then-opening-balance (334,
+ *     335) where ITC and CITC run opening-balance-then-received (124/125,
+ *     224/225).
+ *   - The page SHADES OUT cells that do not apply: no opening balance and no
+ *     expiry on a current-year row, and no receipt on a preceding-year row for
+ *     ITC/CITC. `AT1_SCHEDULE_3_VINTAGE_TABLES` in `@classytic/ca-tax` carries
+ *     which, and the interface greys them rather than accepting a value the
+ *     form has no box for.
+ *
+ * Both `openingBalance` and `received` are therefore optional on every row:
+ * which of the two a given row legitimately has depends on the table and the
+ * year index.
+ */
+export const AlbertaCreditVintageRow = z
+  .object({
+    yearIndex: z
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .optional()
+      .describe(
+        'Line 120 / 220 / 330 — the page’s "Year of origin": 0 is the current taxation ' +
+          'year, 1 the 1st preceding, up to 4 (Investor Tax Credit) or 10 (the other two). ' +
+          'A row without one cannot be placed on the form and is not filed.',
+      ),
+    taxYearEnd: z
+      .string()
+      .optional()
+      .describe('Line 122 / 222 / 332 — that year’s own tax year end, ISO YYYY-MM-DD.'),
+    openingBalance: z
+      .number()
+      .optional()
+      .describe(
+        'Line 124 / 224 / 335 — balance at the beginning of the year, including transfers ' +
+          'on an eligible amalgamation or wind-up. Shaded out on the current-year row: the ' +
+          'credit was received during the year, not carried into it.',
+      ),
+    received: z
+      .number()
+      .optional()
+      .describe(
+        'Line 125 / 225 / 334 — credit received. On the ITC and CITC tables this means ' +
+          'received in the CURRENT year, so it is shaded out on every preceding-year row. ' +
+          'On the APITC table it means received in THAT vintage’s own year and stays live ' +
+          'on every row — see the row type’s doc comment.',
+      ),
+    applied: z
+      .number()
+      .optional()
+      .describe('Line 126 / 226 / 336 — applied to reduce tax payable. Totalled by the page.'),
+    expired: z
+      .number()
+      .optional()
+      .describe(
+        'Line 128 / 228 / 338 — expired during the year. Shaded out on the current-year ' +
+          'row: nothing can expire in the year it was received.',
+      ),
+  })
+  .meta({ id: 'AlbertaCreditVintageRow' });
+
+/**
+ * AT1 Schedule 3 pages 2 and 3 — the three year-of-origin tables.
+ *
+ * Separate from `AlbertaOtherCredits3Values` (page 1) because these are a
+ * different KIND of thing: page 1 is the aggregate claim the engine computes,
+ * these are the supporting detail TRA requires alongside it and the engine does
+ * not derive. Keeping them in one slice would suggest the two are one
+ * calculation.
+ *
+ * The last column of each table (130 / 230 / 340) is absent on purpose: the page
+ * states its arithmetic in its own column heading, so it is derived, not
+ * entered.
+ */
+export const AlbertaCreditVintages3Values = z
+  .object({
+    investorTaxCredit: z
+      .array(AlbertaCreditVintageRow)
+      .optional()
+      .describe('Lines 120-130. Five rows at most — the current year and four preceding ones.'),
+    capitalInvestmentTaxCredit: z
+      .array(AlbertaCreditVintageRow)
+      .optional()
+      .describe('Lines 220-230. Eleven rows at most — the current year and ten preceding ones.'),
+    agriProcessingTaxCredit: z
+      .array(AlbertaCreditVintageRow)
+      .optional()
+      .describe(
+        'Lines 330-340. Eleven rows at most. Note this table’s columns are ordered ' +
+          'received (334) before opening balance (335), the reverse of the other two.',
+      ),
+  })
+  .meta({ id: 'AlbertaCreditVintages3Values' });
+
+/**
  * AT1 Schedule 29 — the Innovation Employment Grant. Entirely Alberta-only:
  * federal tracks SR&ED spending Canada-wide, with no Alberta-specific
  * split, and the associated-group figures (taxable capital, prior-year
@@ -806,14 +944,28 @@ export const AlbertaIegValues = z
 
 export const AlbertaOtherCredits3Values = z
   .object({
-    taxPayableBeforeDeduction: z
-      .number()
-      .optional()
-      .describe('AT1 page 2, line 068 — Alberta tax payable before this deduction.'),
-    line070: z.number().optional().describe('AT1 page 2, line 070.'),
-    line071: z.number().optional().describe('AT1 page 2, line 071.'),
-    line072: z.number().optional().describe('AT1 page 2, line 072.'),
-    line074: z.number().optional().describe('AT1 page 2, line 074.'),
+    /*
+     * ── The shared ceiling is NOT collected here ─────────────────────────────
+     *
+     * This slice used to carry five money fields for it —
+     * `taxPayableBeforeDeduction` (jacket 068), `line070`, `line071`, `line072`
+     * and `line074` — each a box on the Schedule 3 form that a preparer typed.
+     *
+     * Three of them were never the preparer's to give. The AT1 jacket types 068
+     * as `computed` and 070/072 as `carried-in` from Schedules 1 and 4, all of
+     * which this engine already produces. So a return could state 068 = 100,000
+     * on Schedule 3 while transmitting 85,000 on the jacket, and the deduction
+     * at 604 — with the jacket's own 076, which takes it — would both be
+     * computed from a figure the return does not contain. Nothing would have
+     * looked broken.
+     *
+     * The ceiling is derived by the engine now, after it computes the Alberta
+     * tax: see `SCHEDULE_3_ROOM` in ca-tax's `alberta-return.ts`. The two terms
+     * that genuinely are the preparer's, jacket 071 (Manufacturing and
+     * Processing Profits Deduction) and 074 (Political Contributions Tax
+     * Credit), moved to `AlbertaValues` — the jacket slice, where the form puts
+     * them.
+     */
     itcCertificatesIssued: z
       .number()
       .optional()
@@ -906,6 +1058,23 @@ export const AlbertaOtherCredits3Values = z
       .describe(
         '003314 — total Agri-Processing Investment Tax Credit expired during the year (= 003338 occurrence 10).',
       ),
+    /*
+     * Pages 2 and 3 — the three carry-forward-by-year-of-origin tables.
+     *
+     * NESTED here rather than given a slice of their own, because the registry
+     * in the web app pins exactly one nav entry per `ReturnInput` key and
+     * Schedule 3 is ONE schedule. A separate slice compiled to a second
+     * "Schedule 3" row in the schedule tree, which is what
+     * `SCHEDULE_KEYS_MATCH_RETURN_INPUT` exists to catch — and did.
+     *
+     * Still a distinct object rather than three loose arrays: page 1 is the
+     * aggregate claim the engine computes, these are the supporting detail it
+     * does not derive, and flattening them together would read as one
+     * calculation.
+     */
+    vintages: AlbertaCreditVintages3Values.optional().describe(
+      'AT1 Schedule 3 pages 2 and 3 — the year-of-origin detail behind lines 102, 202 and 302.',
+    ),
   })
   .meta({ id: 'AlbertaOtherCredits3Values' });
 
@@ -1679,6 +1848,8 @@ export type IegProjectRow = z.infer<typeof IegProjectRow>;
 export type IegJurisdictionAmount = z.infer<typeof IegJurisdictionAmount>;
 export type AlbertaIegValues = z.infer<typeof AlbertaIegValues>;
 export type AlbertaOtherCredits3Values = z.infer<typeof AlbertaOtherCredits3Values>;
+export type AlbertaCreditVintageRow = z.infer<typeof AlbertaCreditVintageRow>;
+export type AlbertaCreditVintages3Values = z.infer<typeof AlbertaCreditVintages3Values>;
 export type ForeignInvestmentCountry4Row = z.infer<typeof ForeignInvestmentCountry4Row>;
 export type AlbertaForeignInvestment4Values = z.infer<typeof AlbertaForeignInvestment4Values>;
 export type AlbertaSchedule12Values = z.infer<typeof AlbertaSchedule12Values>;

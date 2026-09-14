@@ -20,8 +20,8 @@ import {
   resolveAlbertaTaxRates,
   SINGLE_JURISDICTION_ALBERTA_FACTOR,
 } from '@classytic/ca-tax/t2';
-import type { ComposedFederalInput } from './assemble-t2-input.js';
 import { albertaSbdFacts, assembleAt1Schedules } from './assemble-at1-schedules.js';
+import type { ComposedFederalInput } from './assemble-t2-input.js';
 import type { ReturnInput } from './return-input-contract.js';
 
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v) || 0);
@@ -103,12 +103,33 @@ export function assembleProvincialInput(
     // tax on $300,000 of income. Passed from one place so the two cannot drift.
     const sbdFacts = albertaSbdFacts(fed, ri);
 
+    /*
+     * AT1 jacket lines 000071 and 000074 — the two terms of Schedule 3's
+     * shared ceiling that ARE the preparer's to give.
+     *
+     * `input` on the jacket; nothing computes them. Forwarded at the TOP level
+     * rather than inside `schedules`, because two things need them — the jacket
+     * payload and Schedule 3's room — and one figure must have one home.
+     *
+     * Schedule 3 used to collect its own copies of these, along with copies of
+     * 068, 070 and 072 which are not the preparer's at all. That is what let a
+     * return state one ceiling on Schedule 3 and transmit a different jacket.
+     * See `SCHEDULE_3_ROOM` in ca-tax's `alberta-return.ts`.
+     */
+    const ab = ri.alberta ?? {};
+
     return {
       period,
       federalTaxableIncome,
       activeBusinessIncome,
       ...(sbdFacts ?? {}),
       ...(allocation ? { allocation } : {}),
+      ...(num(ab.manufacturingDeduction) > 0
+        ? { manufacturingDeduction: num(ab.manufacturingDeduction) }
+        : {}),
+      ...(num(ab.politicalContributionsTaxCredit) > 0
+        ? { politicalContributionsTaxCredit: num(ab.politicalContributionsTaxCredit) }
+        : {}),
       ...(schedules && Object.keys(schedules).length > 0 ? { schedules } : {}),
       ...(ieg ? { ieg } : {}),
     };
