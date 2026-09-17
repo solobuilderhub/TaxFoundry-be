@@ -182,6 +182,30 @@ const ALBERTA_SCENARIOS: CorpusScenario[] = [
     isCcpc: true,
   },
   {
+    /**
+     * The first AT1 scenario with a permanent establishment OUTSIDE Alberta,
+     * and the reason Schedule 2 could go missing unnoticed: every other one is
+     * single-jurisdiction, so the allocation factor is 1 and Schedule 2 has
+     * nothing to report. Here the income is allocated —
+     * ½(1,400,000/2,000,000) + ½(300,000/400,000) = 0.725 — and the schedule
+     * must show the four bases that produced it.
+     */
+    program: 'AT1',
+    id: 'AB7-multi-jurisdiction',
+    title: 'AT1 allocated across Alberta and Ontario — Schedule 2',
+    taxYear: TAX_YEAR,
+    fed: {
+      bookNetIncome: 500_000,
+      activeBusinessIncome: 500_000,
+      permanentEstablishments: [
+        { province: 'AB', grossRevenue: 1_400_000, salariesWages: 300_000 },
+        { province: 'ON', grossRevenue: 600_000, salariesWages: 100_000 },
+      ],
+    },
+    returnInput: DIVERGENCE,
+    isCcpc: true,
+  },
+  {
     program: 'AT1',
     id: 'AB5-non-ccpc',
     title: 'AT1 for a non-CCPC — no Alberta small-business deduction',

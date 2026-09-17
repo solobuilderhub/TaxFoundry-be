@@ -1257,6 +1257,24 @@ export const AlbertaSchedule12Values = z
       .describe(
         '012082 — Alberta override, from AT1 Schedule 21 line 017. Leave blank when it equals the federal amount.',
       ),
+    abiDiffersFromFederal: z
+      .enum(['yes', 'no'])
+      .optional()
+      .describe(
+        '012100 — does the corporation\'s calculation of active business income for Alberta purposes differ from its federal ABI? §3.2.3.13 defaults this to "No", which is what this engine computes (it takes the federal figure). Answer "Yes" to file the reconciliation below; AT1 Schedule 1 line 003 — and therefore the Alberta small business deduction — is then computed on 012106 instead of the federal amount.',
+      ),
+    abiFederalAmount: z
+      .number()
+      .optional()
+      .describe(
+        '012102 — the federal active business income being reconciled: T2 line 400, or federal Schedule 7 amount Q / Schedule 16 line 124 when line 400 is nil or negative. Signed. Required when 012100 is "Yes"; the specification says the field must not exist when it is "No".',
+      ),
+    abiDiscretionaryAdjustment: z
+      .number()
+      .optional()
+      .describe(
+        '012104 — the adjustment to ABI for Alberta purposes due to discretionary items. Signed: the form prints "Show negative amount in brackets ()". Required when 012100 is "Yes", absent when "No".',
+      ),
     partVI1TaxDeductible: z
       .number()
       .optional()

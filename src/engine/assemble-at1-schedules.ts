@@ -307,7 +307,11 @@ export function albertaSbdFacts(fed: Fed, ri: Ri) {
   // jurisdiction.
   const isAssociated = (sbd.associated ?? []).some((m) => m?.name || m?.allocatedLimit);
   return {
-    activeBusinessIncome: num(fed.activeBusinessIncome),
+    // The ALBERTA active business income (Schedule 12 line 106 when the
+    // preparer states a divergence, the federal figure otherwise) — Schedule 1
+    // line 003 is that amount, so the deduction has to be computed on it.
+    activeBusinessIncome: albertaActiveBusinessIncome(num(fed.activeBusinessIncome), ri.albertaSchedule12)
+      .albertaAbi,
     status: ab.corporationStatus,
     ...(ab.wasCcpcThroughoutYear === 'no' ? { wasCcpcThroughoutYear: false } : {}),
     ...(isAssociated ? { isAssociated: true } : {}),
@@ -346,7 +350,19 @@ function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusi
 
   return {
     result,
-    activeBusinessIncome: num(fed.activeBusinessIncome),
+    /*
+     * Line 003, "Income from active businesses for Alberta purposes" — the
+     * ALBERTA figure, the same one the deduction was computed on.
+     *
+     * §3.2.3.2: "if 012100 = 1, then value = 012102 + 012104 … otherwise, if
+     * form 012 does not exist, default to fed 200400." Filing the federal
+     * amount here while `computeAlbertaSbd` worked on the Alberta one would
+     * print a schedule that contradicts its own deduction.
+     */
+    activeBusinessIncome: albertaActiveBusinessIncome(
+      num(fed.activeBusinessIncome),
+      ri.albertaSchedule12,
+    ).albertaAbi,
     albertaTaxableIncome,
     ...(ab.royaltyTaxDeduction != null ? { royaltyTaxDeduction: num(ab.royaltyTaxDeduction) } : {}),
     ...(agreementMembers.length > 0 ? { agreementMembers } : {}),
@@ -997,6 +1013,38 @@ export function federalDivisionC(federal: FederalT2Result, v: Ri['albertaSchedul
 }
 
 /**
+ * AT1 Schedule 12 lines 100-106 — the active business income reconciliation,
+ * and the ABI the Alberta small business deduction is therefore computed on.
+ *
+ * §3.2.3.13 defaults line 100 to "No", which is exactly what this engine does:
+ * it takes the federal active business income. When the preparer answers "Yes",
+ * Schedule 1 line 003 changes source — "if 012100 = 1, then value = 012102 +
+ * 012104 … otherwise, if form 012 does not exist, default to fed 200400" — so
+ * the deduction must be worked out on the Alberta figure, not the federal one.
+ * Resolved here, once, and used for BOTH the filed reconciliation and the SBD.
+ */
+export function albertaActiveBusinessIncome(federalAbi: number, v: Ri['albertaSchedule12']) {
+  if (v?.abiDiffersFromFederal !== 'yes') {
+    return { reconciliation: { differsFromFederal: false } as const, albertaAbi: federalAbi };
+  }
+  // The federal side of the reconciliation defaults to the federal ABI this
+  // return was computed on — the preparer states it only where it differs from
+  // what T2 line 400 carried.
+  const federalAmount = v.abiFederalAmount ?? federalAbi;
+  const discretionaryAdjustment = v.abiDiscretionaryAdjustment ?? 0;
+  return {
+    reconciliation: {
+      differsFromFederal: true as const,
+      federalAmount,
+      discretionaryAdjustment,
+    },
+    // 012106. Negative ABI is not a deduction base, so the SBD works on nil —
+    // `computeAlbertaSbd` floors its own income at zero too.
+    albertaAbi: federalAmount + discretionaryAdjustment,
+  };
+}
+
+/**
  * The Area B pairs taken off the federal T2 — `undefined` for any the preparer
  * left blank, so `alwaysPair` omits it rather than asserting a zero.
  *
@@ -1064,6 +1112,8 @@ function scheduleTwelve(
   albertaTaxableIncome: number,
   // Area B, the items the form asks the preparer to copy off the federal T2.
   areaB: Ri['albertaSchedule12'],
+  // Lines 100-106 — the federal ABI the Alberta reconciliation starts from.
+  federalActiveBusinessIncome: number,
 ): {
   result: Schedule12Result;
   filingInput: Schedule12FilingInput;
@@ -1251,6 +1301,10 @@ function scheduleTwelve(
     // overridden.
     ...areaBPairs(areaB),
     taxableIncome: { alberta: albertaTaxableIncome, federal: federal.taxableIncome },
+    // 012100-012106. Mandatory line 100 with the specification's own default,
+    // and the three lines it gates when the answer is "Yes".
+    albertaActiveBusinessIncome: albertaActiveBusinessIncome(federalActiveBusinessIncome, areaB)
+      .reconciliation,
     // 012130/131 — same "omit when this composer has no data at all" shape
     // as donations below. The federal side is T2 jacket line 336
     // ("Restricted interest and financing expenses from Schedule 4"), which
@@ -1431,7 +1485,21 @@ function assembleIeg(ri: Ri): AlbertaReturnInput['ieg'] {
   const iegInput = ri.albertaIeg;
   if (!iegInput) return undefined;
   const members: IegGroupMember[] = iegInput.group ?? [];
-  if (members.length === 0) return undefined;
+  /*
+   * An empty group is NOT a reason to discard the claim here.
+   *
+   * This used to `return undefined`, so a preparer who entered Innovation
+   * Employment Grant expenditures but no group row got silence: no Schedule 29,
+   * no grant, and no explanation of why. The engine already handles the case
+   * properly and fails closed WITH a reason — "no associated-group members were
+   * supplied, so no grant was claimed. Pass the claimant itself even when it has
+   * no associated corporations" — because an empty group would otherwise imply
+   * no taxable-capital grind and a nil base, i.e. the maximum possible grant on
+   * absent data.
+   *
+   * Passing it through costs nothing (ca-tax still files no schedule and claims
+   * nothing) and turns a silent drop into an instruction the preparer can act on.
+   */
 
   const agreementMembers: IegAgreementMember[] = iegInput.agreementMembers ?? [];
   const primaryFieldCode = Number(iegInput.primaryFieldCode);
@@ -1509,6 +1577,7 @@ export function assembleAt1Schedules(
     resourceDeductions,
     albertaTaxableIncome,
     ri.albertaSchedule12,
+    num(fed.activeBusinessIncome),
   );
 
   const losses = scheduleTwentyOne(
@@ -1541,6 +1610,7 @@ export function assembleAt1Schedules(
     resourceDeductions,
     albertaTaxableIncome,
     ri.albertaSchedule12,
+    num(fed.activeBusinessIncome),
   );
 
   // Area B items the preparer entered directly (`ri.albertaSchedule12`) —

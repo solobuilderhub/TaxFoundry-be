@@ -118,6 +118,34 @@ export function assembleProvincialInput(
      */
     const ab = ri.alberta ?? {};
 
+    /*
+     * Schedule 2 — the allocation factor's own working.
+     *
+     * `allocation` at the top level gives the ENGINE the four bases it divides
+     * to get the factor. `schedules.allocation` is what gets FILED: ca-tax has
+     * pushed `schedule2Values(sched.allocation)` since the schedule was built,
+     * but nothing ever populated it, so a corporation with a permanent
+     * establishment outside Alberta transmitted a factor on the jacket and no
+     * Schedule 2 showing where it came from — all four of its mandatory lines
+     * (002/004/006/008) absent from the return.
+     *
+     * The two shapes are NOT the same object: the engine's `AllocationFactorInput`
+     * says `albertaGrossRevenue`/`totalGrossRevenue`, the filing input says
+     * `albertaRevenue`/`totalRevenue`. Spreading one into the other would file
+     * two undefined lines and look like it worked.
+     */
+    const scheduleTwo = allocation
+      ? {
+          albertaSalaries: allocation.albertaSalaries,
+          totalSalaries: allocation.totalSalaries,
+          albertaRevenue: allocation.albertaGrossRevenue,
+          totalRevenue: allocation.totalGrossRevenue,
+        }
+      : undefined;
+    const filedSchedules = scheduleTwo
+      ? { ...(schedules ?? {}), allocation: scheduleTwo }
+      : schedules;
+
     return {
       period,
       federalTaxableIncome,
@@ -130,7 +158,9 @@ export function assembleProvincialInput(
       ...(num(ab.politicalContributionsTaxCredit) > 0
         ? { politicalContributionsTaxCredit: num(ab.politicalContributionsTaxCredit) }
         : {}),
-      ...(schedules && Object.keys(schedules).length > 0 ? { schedules } : {}),
+      ...(filedSchedules && Object.keys(filedSchedules).length > 0
+        ? { schedules: filedSchedules }
+        : {}),
       ...(ieg ? { ieg } : {}),
     };
   }
