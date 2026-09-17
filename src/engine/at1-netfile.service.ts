@@ -103,6 +103,34 @@ const flag = (
   return {};
 };
 
+/**
+ * A single-digit code answer (jacket 030, 039, 041, 051), absent when blank.
+ *
+ * Kept separate from `flag` because these are not yes/no: the editor stores the
+ * code the select produced, and the value IS the answer rather than a boolean's
+ * encoding. Kept separate from `str` because the key has to be omitted
+ * entirely, not set to undefined — `At1FilingData` distinguishes "no answer"
+ * from "answered", and an explicit `undefined` property would satisfy neither
+ * the spread nor the completeness check cleanly.
+ */
+const code = (source: Record<string, unknown> | undefined, key: string): Record<string, string> => {
+  const v = str(source?.[key]);
+  return v === undefined ? {} : { [key]: v };
+};
+
+/** A date answer (jacket 052, 053) off the frozen input, where it is an ISO string. */
+const dateField = (
+  source: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, Date> => {
+  const v = source?.[key];
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? {} : { [key]: v };
+  const s = str(v);
+  if (s === undefined) return {};
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? {} : { [key]: d };
+};
+
 export interface AmendmentIdentity {
   clientId: unknown;
   program: string;
@@ -313,7 +341,22 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
   // The AT1 jacket answers live on the frozen RETURN INPUT, not on `identity` —
   // `identity` carries only the client-derived fields (name, address, dates).
   // Reading them off `identity` silently yielded undefined for every one.
-  const ab = ((src.computed.filingInput ?? {}).alberta ?? {}) as Record<string, unknown>;
+  const ab = (src.computed.filingInput?.alberta ?? {}) as Record<string, unknown>;
+  /*
+   * 000082 — instalments and other payments made for the year.
+   *
+   * On its own slice, not `alberta`, because the editor collects it once for
+   * the engagement (`payments.instalmentsPaid`) and an engagement is a single
+   * program's return: an AT1 engagement's instalments are the ALBERTA ones.
+   *
+   * Nothing read it before, and `at1-line-items.ts` files the line as
+   * `d.instalmentsPaid ?? 0`. So every AT1 for a corporation that pays
+   * instalments — which is most of them — transmitted 082 as ZERO and, because
+   * line 090 subtracts it, overstated the balance owing by the whole amount
+   * paid. Two wrong figures on the two lines TRA uses to decide what the
+   * corporation still owes.
+   */
+  const pay = (src.computed.filingInput?.payments ?? {}) as Record<string, unknown>;
   const transmitter = resolveTransmitter(src);
   const data: At1FilingData = {
     /*
@@ -367,6 +410,10 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
     // Figures the AT1 restates from the federal return.
     ...frozenNum(ab, 'grossRevenue'),
     ...frozenNum(ab, 'totalAssets'),
+    // 000082 — see `pay` above. Absent stays absent: the line itself defaults
+    // to zero when filed, but an explicit zero here and "never entered" are the
+    // same filing, and inventing a figure would be worse than either.
+    ...frozenNum(pay, 'instalmentsPaid'),
 
     // The jacket's yes/no answers. An UNANSWERED question stays undefined so the
     // line is dropped rather than answered "No" on the corporation's behalf —
@@ -386,6 +433,18 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
     ...flag(ab, 'reportsDifferentAlbertaIncome'),
     ...flag(ab, 'electsDifferentDiscretionaryAmounts'),
     ...flag(ab, 'preparedByTaxPreparerForFee'),
+
+    // The follow-ups those answers make mandatory. Each is conditional (`X`) in
+    // §3.2.3.1, so none appears in the mandatory-jacket list — but 039 becomes
+    // required the moment 038 is "Yes", and 051 (then 052 or 053) the moment
+    // 050 is. The engine drops any whose gate is shut, so a stale answer left
+    // by a since-changed gate cannot reach TRA.
+    ...code(ab, 'specialCorporationStatus'),
+    ...code(ab, 'taxYearEndChangeReason'),
+    ...code(ab, 'functionalCurrency'),
+    ...code(ab, 'finalReturnReason'),
+    ...dateField(ab, 'dateOfAmalgamation'),
+    ...dateField(ab, 'dateOperationsCeased'),
     innovationEmploymentGrant: fieldValue(fields, 'innovationEmploymentGrant'),
     certification: src.certification,
     transmitter: src.amendment

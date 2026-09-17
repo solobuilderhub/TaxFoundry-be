@@ -23,6 +23,7 @@ import type { ReviewMemoDocument } from '#resources/workpapers/review-memo/revie
 import reviewMemoRepository from '#resources/workpapers/review-memo/review-memo.repository.js';
 import { appendFact } from '#shared/append-fact.js';
 import type { WithId } from '#shared/db.js';
+import type { ReturnInput } from '../engine/contracts/return-input.js';
 import { getAlbertaRateBook, getFederalRateBook, getQuebecRateBook } from '../engine/tax-rates.js';
 import { runDiagnostics } from './diagnostics.js';
 
@@ -43,7 +44,17 @@ interface ReviewInput {
   corpType?: string;
   businessNumber?: string;
   fold: Record<string, number>;
-  ri: Record<string, any>;
+  /**
+   * The working return, typed against the contract the API validates rather
+   * than `Record<string, any>`.
+   *
+   * The `any` was load-bearing by accident: every slice below is reached as
+   * `ri.sbd.activeBusinessIncome` and friends, and `any` made all of it compile
+   * whether or not the field existed. A renamed or removed contract field would
+   * have silently read `undefined` here and quietly changed which review flags
+   * fire — on the layer whose whole job is catching mistakes before filing.
+   */
+  ri: Partial<ReturnInput>;
   /** True when the return's tax year has an EXACT certified rate table, in ITS OWN program's rate book. */
   rateYearCertified?: boolean;
   /** The return's tax year (for the rate-year flag message). */
@@ -218,7 +229,7 @@ export function evaluateReviewFlags(input: ReviewInput): Flag[] {
   }
 
   // ── Capital cost allowance (Schedule 8) ───────────────────────────────────
-  const ccaClasses = (cca.classes ?? []) as any[];
+  const ccaClasses = (cca.classes ?? []) as unknown[];
   const claimedCca = ccaClasses.length > 0;
   if (num(bs.capitalAssetsNet) > 0 && !claimedCca) {
     push(
@@ -477,7 +488,7 @@ export interface RunReviewResult {
  * — by then the return is finished. Surfacing it in the review costs nothing and
  * moves the discovery to the first place a preparer looks after computing.
  */
-function at1ClientIdentityFlags(
+export function at1ClientIdentityFlags(
   program: string,
   client: Record<string, unknown> | null,
 ): { severity: Severity; code: string; message: string; resolved: boolean }[] {
@@ -495,10 +506,47 @@ function at1ClientIdentityFlags(
   if (blank(client?.natureOfBusiness)) missing.push('nature of business (000028)');
   if (blank(client?.typeOfCorporation)) missing.push('type of corporation (000029)');
   if (blank(client?.authorizedEmail)) missing.push('authorized email (000105)');
-  if (missing.length === 0) return [];
 
-  return [
-    {
+  /*
+   * Present but not in the shape Alberta accepts.
+   *
+   * Distinct from "missing", and worth its own flag: a field that LOOKS filled
+   * in passes every emptiness check here and in the filing path, then fails at
+   * TRA — the slowest possible place to learn about a typo. Both of these are
+   * coded fields whose value is transmitted verbatim, so the code IS the
+   * answer; prose in the box is not a formatting nicety but a different (and
+   * unparseable) statement.
+   *
+   * The constraints are §3.2.3.1's own, and the type column is the authority
+   * rather than the caption:
+   *
+   *   028  Nature of Business   N  4   "Must be a valid code from the SIC codes"
+   *   029  Type of Corporation  N  1   codes 1-5
+   *
+   * Only the SHAPE is checked, not membership: the SIC list lives in the
+   * specification's Section 3.5 and is not modelled here, so claiming a code is
+   * "invalid" would assert more than this app knows. A four-digit number that
+   * is not a real SIC code still reaches TRA — but "Holding company" typed into
+   * a numeric field never can, and that is the mistake a preparer actually
+   * makes.
+   */
+  const malformed: string[] = [];
+  const sic = client?.natureOfBusiness;
+  if (!blank(sic) && !/^\d{4}$/.test(String(sic).trim())) {
+    malformed.push(
+      `nature of business (000028) must be a 4-digit SIC code, e.g. 0198 — got "${String(sic).trim()}"`,
+    );
+  }
+  const corpType = client?.typeOfCorporation;
+  if (!blank(corpType) && !/^[1-5]$/.test(String(corpType).trim())) {
+    malformed.push(
+      `type of corporation (000029) must be a single digit 1-5 — got "${String(corpType).trim()}"`,
+    );
+  }
+
+  const flags: { severity: Severity; code: string; message: string; resolved: boolean }[] = [];
+  if (missing.length > 0) {
+    flags.push({
       severity: 'red' as Severity,
       code: 'AT1_CLIENT_IDENTITY_INCOMPLETE',
       message:
@@ -506,8 +554,21 @@ function at1ClientIdentityFlags(
         `${missing.join(', ')}. Add them on the client, then recompute — the Net File ` +
         'payload cannot be generated without them.',
       resolved: false,
-    },
-  ];
+    });
+  }
+  if (malformed.length > 0) {
+    flags.push({
+      severity: 'red' as Severity,
+      code: 'AT1_CLIENT_IDENTITY_MALFORMED',
+      message:
+        `The client record has ${malformed.length} field(s) Alberta will reject: ` +
+        `${malformed.join('; ')}. These are transmitted exactly as entered, so TRA ` +
+        'rejects the return rather than interpreting them. Correct them on the client, ' +
+        'then recompute.',
+      resolved: false,
+    });
+  }
+  return flags;
 }
 
 /**

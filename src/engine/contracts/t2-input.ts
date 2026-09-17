@@ -165,18 +165,88 @@ export const GifiNotesValues = z
   })
   .meta({ id: 'GifiNotesValues' });
 
+/**
+ * Schedule 1's lines, as they arrive from the editor.
+ *
+ * ── Why this needs normalizing at all ───────────────────────────────────────
+ *
+ * The editor names each box for the line it is filed under — `lines.101`,
+ * `lines.403` — so what a preparer types is already in filing shape with no
+ * mapping step to get wrong. That is the right design, and it collides with
+ * react-hook-form's path semantics: a NUMERIC path segment means an ARRAY
+ * INDEX, so `lines.101` builds `lines[101]` rather than `lines["101"]`, and the
+ * slice leaves the browser as a sparse array 419 long (one past line 418, the
+ * highest on the form). `JSON.stringify` writes a hole as `null`, so an
+ * untouched Schedule 1 serializes as a wall of nulls — which is what made this
+ * visible, and is also why it was invisible for so long: the payload looks like
+ * garbage rather than like data in the wrong container.
+ *
+ * It failed closed, at least: `expected record, received array` rejected the
+ * WHOLE save, so no return was ever stored with misplaced figures. But it
+ * rejected every save of any return that had rendered Schedule 1, whatever else
+ * was on it, and the message named a shape mismatch rather than anything a
+ * preparer could act on.
+ *
+ * ── Why the fix belongs here ────────────────────────────────────────────────
+ *
+ * The array index IS the line number, so no information is lost and the
+ * conversion is exact. Doing it at the contract rather than in the browser
+ * means: a client already deployed is fixed without shipping one, a document
+ * saved in either shape reads back, and there is ONE definition of the stored
+ * shape instead of a client-side transform that could drift from it. The engine
+ * and every downstream reader keep seeing the record they were written against.
+ *
+ * Nulls are stripped rather than rejected for the same reason: a cleared money
+ * box gives back `null`, and "the preparer emptied this field" is not a
+ * different fact from "the preparer never filled it" — both mean no amount on
+ * that line. Rejecting the save over it would fail a return for being edited.
+ */
+const ScheduleOneLines = z.preprocess(
+  (raw) => {
+    if (raw == null || typeof raw !== 'object') return raw;
+    const entries = Array.isArray(raw)
+      ? // Index → line number. A hole reads as undefined, a cleared box as null;
+        // both drop out below.
+        raw.map((v, i) => [String(i), v] as const)
+      : Object.entries(raw as Record<string, unknown>);
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of entries) {
+      // Absent, or emptied by the preparer. Both mean no amount on the line.
+      if (value == null || value === '') continue;
+      if (typeof value === 'number') {
+        out[key] = value;
+        continue;
+      }
+      // A numeric string is the same figure in a different wrapper, so it is
+      // converted. Anything else is passed through UNCHANGED so the schema
+      // below rejects it and the save reports the bad line.
+      //
+      // The first version of this dropped whatever it could not convert, which
+      // is how a preparer loses a figure without being told: a value the client
+      // mangled would have vanished and the save would have succeeded. Silently
+      // discarding an amount on a tax return is worse than refusing it.
+      const n = typeof value === 'string' ? Number(value) : Number.NaN;
+      out[key] = Number.isFinite(n) ? n : value;
+    }
+    return out;
+  },
+  z.record(z.string(), z.number()),
+);
+
 export const NetIncomeValues = z
   .object({
-    lines: z
-      .record(z.string(), z.number().optional())
-      .optional()
-      .describe(
-        'Schedule 1, keyed by CRA line number: { "104": 50000, "403": 55000 }.\n\n' +
-          'The line number is the transmission key, so storing it as the key means what the ' +
-          'preparer typed is already in the shape the return is filed in. The former ' +
-          '{ description, amount }[] shape reconciled on screen and could not be filed — a ' +
-          "transmitted return has no field for a preparer's own wording.",
-      ),
+    lines: ScheduleOneLines.optional().describe(
+      'Schedule 1, keyed by CRA line number: { "104": 50000, "403": 55000 }.\n\n' +
+        'The line number is the transmission key, so storing it as the key means what the ' +
+        'preparer typed is already in the shape the return is filed in. The former ' +
+        '{ description, amount }[] shape reconciled on screen and could not be filed — a ' +
+        "transmitted return has no field for a preparer's own wording.\n\n" +
+        'Accepts the sparse ARRAY react-hook-form produces for a numeric field path ' +
+        '(`lines.101` → `lines[101]`) and normalizes it to this record — the index is the ' +
+        'line number, so the conversion is exact. Blank and cleared boxes are dropped rather ' +
+        'than stored as null or zero: an untyped line has no amount, which is not the same ' +
+        'statement as a line reported at nil.',
+    ),
   })
   .meta({ id: 'NetIncomeValues' });
 

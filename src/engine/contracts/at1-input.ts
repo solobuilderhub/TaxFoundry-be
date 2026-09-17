@@ -77,6 +77,60 @@ export const AlbertaValues = z
     preparedByTaxPreparerForFee: YesNo.optional().describe(
       '000095 — was the return prepared by a tax preparer for a fee?',
     ),
+
+    // ── The follow-ups the answers above make mandatory ────────────────────
+    //
+    // Conditional (`X`) fields, which is why they were missing: nothing marks
+    // them mandatory, so every audit for unfiled `M` lines passed while these
+    // were uncollectable. Two of them are gated on questions this app ASKS,
+    // so the app itself could produce a return that broke TRA's rule — answer
+    // "Yes" to 038 or 050 and the required follow-up had nowhere to go.
+    specialCorporationStatus: z
+      .string()
+      .optional()
+      .describe(
+        '000030 — special corporation status code. "If fed 200218=1 or federal form 018 exists, ' +
+          'then this field must equal either 1=Investment Corp., 2=Mutual Fund Corp." Neither ' +
+          'federal line 218 nor federal Schedule 18 is modelled here, so this is supplied ' +
+          'rather than derived; the printed page annotates the whole field "(if applicable)".',
+      ),
+    taxYearEndChangeReason: z
+      .string()
+      .optional()
+      .describe(
+        '000039 — reason for the tax year end change: 1=CRA approved change, 2=change in ' +
+          'control, 3=final return. Required when 000038 = Yes; "If 000038=2, then value must ' +
+          'be blank", which the engine enforces by dropping it when the gate shuts. A 3 here ' +
+          'forces 000050 to Yes, by line 050’s own rule.',
+      ),
+    functionalCurrency: z
+      .string()
+      .optional()
+      .describe(
+        '000041 — functional currency code, if other than Canadian: 1=USA, 2=UK, ' +
+          '3=European Monetary Union, 4=Australia, 5=Japan. Absent means Canadian.',
+      ),
+    finalReturnReason: z
+      .string()
+      .optional()
+      .describe(
+        '000051 — reason for the final return: 1=amalgamation, 2=discontinuance of the Alberta ' +
+          'permanent establishment, 3=bankruptcy, 4=wind-up into parent, 5=dissolution. ' +
+          'Required when 000050 = Yes; "If 000050=2, field must not exist."',
+      ),
+    dateOfAmalgamation: z
+      .string()
+      .optional()
+      .describe(
+        '000052 — date of amalgamation, required when 000051 = 1. Must equal the tax year end ' +
+          'or the day after it: a 1 at 000051 means the corporation ceased to exist BY ' +
+          'amalgamating, so this is the predecessor’s final return and its year ended the day ' +
+          'before. Not jacket line 032, which asks the SUCCESSOR about its first year.',
+      ),
+    dateOperationsCeased: z
+      .string()
+      .optional()
+      .describe('000053 — date operations ceased, required when 000051 = 5 (dissolution).'),
   })
   .meta({ id: 'AlbertaValues' });
 

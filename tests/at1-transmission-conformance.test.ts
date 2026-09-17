@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
 import { FORMS } from '@classytic/ca-tax/forms';
-import { renderAt1NetFile } from '@classytic/ca-tax/t2';
+import { assertAt1MandatoryComplete, renderAt1NetFile } from '@classytic/ca-tax/t2';
+import { describe, expect, it } from 'vitest';
 import { assembleProvincialInput } from '../src/engine/assemble-provincial-input.js';
 import { assembleT2Input } from '../src/engine/assemble-t2-input.js';
-import { composeAt1FilingData } from '../src/engine/at1-netfile.service.js';
 import { runAT1Compute } from '../src/engine/at1-compute.js';
+import { composeAt1FilingData } from '../src/engine/at1-netfile.service.js';
 
 /**
  * What a MAXIMAL Alberta return actually transmits.
@@ -64,8 +64,20 @@ const maximalReturn: Record<string, unknown> = {
   albertaCca13: { classes: [{ ccaClass: '8', openingUCC: 100_000, claim: 18_000 }] },
   capitalGains: {
     dispositions: [
-      { description: 'Shares of X Co.', proceeds: 150_000, acb: 80_000, outlays: 2_000, category: 'shares' },
-      { description: 'Land', proceeds: 300_000, acb: 250_000, outlays: 5_000, category: 'realEstate' },
+      {
+        description: 'Shares of X Co.',
+        proceeds: 150_000,
+        acb: 80_000,
+        outlays: 2_000,
+        category: 'shares',
+      },
+      {
+        description: 'Land',
+        proceeds: 300_000,
+        acb: 250_000,
+        outlays: 5_000,
+        category: 'realEstate',
+      },
     ],
   },
   albertaSchedule18: {
@@ -81,8 +93,15 @@ const maximalReturn: Record<string, unknown> = {
     ],
   },
   reserves: { rows: [{ type: 'doubtfulDebts', opening: 5_000, transfer: 0, closing: 8_000 }] },
-  albertaReserves17: { rows: [{ type: 'doubtfulDebts', opening: 5_000, transfer: 0, closing: 9_000 }] },
-  donations: { charitable: 40_000, cultural: 4_000, ecological: 6_000, openingDonationPool: 10_000 },
+  albertaReserves17: {
+    rows: [{ type: 'doubtfulDebts', opening: 5_000, transfer: 0, closing: 9_000 }],
+  },
+  donations: {
+    charitable: 40_000,
+    cultural: 4_000,
+    ecological: 6_000,
+    openingDonationPool: 10_000,
+  },
   albertaDonations: {
     giftsCurrentYear: 10_000,
     giftsOpening: 2_000,
@@ -161,7 +180,11 @@ const maximalReturn: Record<string, unknown> = {
     ],
     cmedb: [{ federalOpeningBalance: 20_000, albertaOpeningBalance: 20_000, claimed: 5_000 }],
   },
-  albertaSred16: { currentYearExpenditures: 120_000, openingPoolBalance: 30_000, amountClaimed: 40_000 },
+  albertaSred16: {
+    currentYearExpenditures: 120_000,
+    openingPoolBalance: 30_000,
+    amountClaimed: 40_000,
+  },
   albertaIeg: {
     federalAmount: 200_000,
     albertaPortion: 150_000,
@@ -414,6 +437,259 @@ describe('every mandatory line the form model describes is transmitted', () => {
   });
 });
 
+/**
+ * The jacket's CONDITIONAL follow-ups — the rules a mandatory-line audit cannot
+ * see.
+ *
+ * Every test above this one asks "is each mandatory (`M`) line transmitted?",
+ * and they all passed for months while four conditional (`X`) lines were
+ * uncollectable — because `X` lines carry no requirement to be present until
+ * their condition is met, so nothing in a mandatory scan ever looks at them.
+ *
+ * Two of the four are gated on questions THIS APP ASKS, which made it worse
+ * than a coverage gap: answering "Yes" to line 038 or line 050 produced a
+ * return that broke TRA's own rule, with no box anywhere in the app to satisfy
+ * it. The defect was created by the software, not merely unhandled by it.
+ *
+ * So these tests are written the way the spec states the rules — in both
+ * directions, because each rule has two halves and only checking the "must
+ * exist" half would miss a stale answer left behind by a gate since changed:
+ *
+ *   039  "If 000038=1, must be a valid code … If 000038=2, then value must be blank."
+ *   051  "If 000050=1, must be a valid code … If 000050=2, field must not exist."
+ *   052  "If 000051=1, date of amalgamation must exist."
+ *   053  "If 000051=5, date operations ceased must exist. If 000050=2, field must not exist."
+ *   050  "If 000039 = 3, then value must = 1."
+ */
+describe('the jacket files each conditional follow-up exactly when its gate is open', () => {
+  const withJacket = (extra: Record<string, unknown>): Record<string, unknown> => ({
+    ...maximalReturn,
+    alberta: { ...(maximalReturn.alberta as Record<string, unknown>), ...extra },
+  });
+  const jacketLines = (input: Record<string, unknown>) =>
+    transmitted(transmit(input)).get('000') ?? new Set<string>();
+  const lineValue = (xml: string, id: string) =>
+    xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1];
+
+  it('files 039 when the tax year end changed, with the code chosen', () => {
+    const xml = transmit(withJacket({ taxYearEndChanged: 'yes', taxYearEndChangeReason: '2' }));
+    expect(transmitted(xml).get('000')?.has('039')).toBe(true);
+    expect(lineValue(xml, '000039001')).toBe('2');
+  });
+
+  it('drops 039 when the gate is "No", even with an answer still in the draft', () => {
+    // The stale-answer case, and the reason the engine gates at emission rather
+    // than trusting the caller: a preparer who answers "Yes", picks a reason,
+    // then corrects 038 to "No" leaves the reason behind in the saved return.
+    // Filing it would break "if 000038=2, then value must be blank" just as
+    // surely as omitting it broke the other half.
+    const sent = jacketLines(withJacket({ taxYearEndChanged: 'no', taxYearEndChangeReason: '2' }));
+    expect(sent.has('038')).toBe(true);
+    expect(sent.has('039')).toBe(false);
+  });
+
+  it('files 051 and 052 for a final return by amalgamation, and not 053', () => {
+    const xml = transmit(
+      withJacket({
+        finalReturn: 'yes',
+        finalReturnReason: '1',
+        dateOfAmalgamation: '2025-01-01', // the day after the 2024-12-31 year end
+      }),
+    );
+    const sent = transmitted(xml).get('000') ?? new Set<string>();
+    expect(sent.has('051')).toBe(true);
+    expect(sent.has('052')).toBe(true);
+    expect(sent.has('053'), '053 belongs to reason 5, not reason 1').toBe(false);
+    expect(lineValue(xml, '000052001')).toBe('20250101');
+  });
+
+  it('files 053 for a dissolution, and not 052', () => {
+    const sent = jacketLines(
+      withJacket({
+        finalReturn: 'yes',
+        finalReturnReason: '5',
+        dateOperationsCeased: '2024-11-30',
+        // Deliberately also present: the wrong date for this reason must not be
+        // filed just because it was typed before the reason was changed.
+        dateOfAmalgamation: '2025-01-01',
+      }),
+    );
+    expect(sent.has('053')).toBe(true);
+    expect(sent.has('052')).toBe(false);
+  });
+
+  it('drops 051, 052 and 053 when this is not the final return', () => {
+    const sent = jacketLines(
+      withJacket({
+        finalReturn: 'no',
+        finalReturnReason: '1',
+        dateOfAmalgamation: '2025-01-01',
+        dateOperationsCeased: '2024-11-30',
+      }),
+    );
+    expect(sent.has('050')).toBe(true);
+    for (const line of ['051', '052', '053']) {
+      expect(sent.has(line), `${line} must not exist when 000050 = 2`).toBe(false);
+    }
+  });
+
+  it('files 030 and 041 when supplied, and drops them when not', () => {
+    // Neither has a gate this return can derive, so the only rule to hold is
+    // that supplying one files it and leaving it blank files nothing — never a
+    // zero or a "1", which would assert a status the corporation does not have.
+    const supplied = jacketLines(
+      withJacket({ specialCorporationStatus: '2', functionalCurrency: '1' }),
+    );
+    expect(supplied.has('030')).toBe(true);
+    expect(supplied.has('041')).toBe(true);
+    const blank = jacketLines({});
+    expect(blank.has('030')).toBe(false);
+    expect(blank.has('041')).toBe(false);
+  });
+
+  describe('and refuses to transmit when an open gate has no answer', () => {
+    const filingData = (extra: Record<string, unknown>) =>
+      composeAt1FilingData({
+        computed: {
+          fields: compute(withJacket(extra)).fields,
+          identity: {},
+          filingInput: withJacket(extra),
+        },
+        client: {
+          name: 'Maximal Ltd.',
+          address: { street: '1 Test Way', city: 'Calgary', province: 'AB', postalCode: 'T2P1A1' },
+          corporateAccountNumber: '1234567890',
+          businessNumber: '123456782',
+          contactPerson: 'Dana QA',
+          contactTelephone: '4035550100',
+          natureOfBusiness: 'Manufacturing',
+          typeOfCorporation: '1',
+          authorizedEmail: 'qa@taxfoundry.test',
+        },
+        engagement: { taxYearStart, taxYearEnd },
+        certification: { firstName: 'A', lastName: 'B', position: 'CFO' },
+        // `false`, like `transmit()` above: `forFiling: true` deliberately
+        // ignores the LIVE client record so a filing can only use the input
+        // frozen at compute time, and this fixture's frozen input carries the
+        // jacket answers but not the identity block. Leaving it true made every
+        // case here fail on missing contact details — an unrelated rule, and it
+        // would have masked whether the conditional gates work at all.
+        forFiling: false,
+      } as never);
+
+    it('names 039 when the tax year end changed but no reason was given', () => {
+      expect(() => assertAt1MandatoryComplete(filingData({ taxYearEndChanged: 'yes' }))).toThrow(
+        /000039/,
+      );
+    });
+
+    it('names 051 when it is the final return but no reason was given', () => {
+      expect(() => assertAt1MandatoryComplete(filingData({ finalReturn: 'yes' }))).toThrow(
+        /000051/,
+      );
+    });
+
+    it('names 052 when the reason is amalgamation but no date was given', () => {
+      expect(() =>
+        assertAt1MandatoryComplete(filingData({ finalReturn: 'yes', finalReturnReason: '1' })),
+      ).toThrow(/000052/);
+    });
+
+    it('names 053 when the reason is dissolution but no date was given', () => {
+      expect(() =>
+        assertAt1MandatoryComplete(filingData({ finalReturn: 'yes', finalReturnReason: '5' })),
+      ).toThrow(/000053/);
+    });
+
+    it('reports the contradiction when 039 says "final return" but 050 says No', () => {
+      // Line 050's own rule: "If 000039 = 3, then value must = 1." Two given
+      // answers that cannot both be true — the preparer has to settle it,
+      // because either one could be the mistake.
+      expect(() =>
+        assertAt1MandatoryComplete(
+          filingData({
+            taxYearEndChanged: 'yes',
+            taxYearEndChangeReason: '3',
+            finalReturn: 'no',
+          }),
+        ),
+      ).toThrow(/000050/);
+    });
+
+    it('accepts a complete final return by amalgamation', () => {
+      expect(() =>
+        assertAt1MandatoryComplete(
+          filingData({
+            finalReturn: 'yes',
+            finalReturnReason: '1',
+            dateOfAmalgamation: '2025-01-01',
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts a return whose gates are all "No" — no follow-up is required then', () => {
+      expect(() => assertAt1MandatoryComplete(filingData({}))).not.toThrow();
+    });
+  });
+});
+
+/**
+ * Instalments reach the filed return — lines 082 and 090.
+ *
+ * `At1FilingData.instalmentsPaid` existed, `at1-line-items.ts` filed it as
+ * `d.instalmentsPaid ?? 0`, and NOTHING ever set it: `composeAt1FilingData`
+ * read the `alberta` slice and never the `payments` one, where the editor
+ * actually collects the figure. So every AT1 for a corporation that pays
+ * instalments — which is most of them — went to TRA with
+ *
+ *   082  instalments and other payments = 0
+ *   090  balance unpaid                 = overstated by the whole amount paid
+ *
+ * because 090 subtracts 082. Two wrong figures on the two lines TRA uses to
+ * decide what the corporation still owes, and both wrong in the direction that
+ * says the corporation owes more than it does.
+ *
+ * Nothing caught it because the mandatory-line audits ask whether 082 is
+ * PRESENT, and a hardcoded zero is present. Being filed is not the same as
+ * being right, which is why these assert the value.
+ */
+describe('instalments reach the filed AT1', () => {
+  const withPayments = (instalmentsPaid: number): Record<string, unknown> => ({
+    ...maximalReturn,
+    payments: { instalmentsPaid },
+  });
+  const valueOfLine = (xml: string, id: string) =>
+    Number(xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1]);
+
+  it('files the instalments at 082 rather than a hardcoded zero', () => {
+    const xml = transmit(withPayments(7_500));
+    expect(valueOfLine(xml, '000082001')).toBe(7_500);
+  });
+
+  it('still files 082 as zero when none were paid — it is mandatory', () => {
+    expect(valueOfLine(transmit(maximalReturn), '000082001')).toBe(0);
+  });
+
+  it('reduces the balance at 090 by exactly the instalments paid', () => {
+    // 090 = 080 − (129 + 082 + 085 + 086 + 115 + 087). Holding everything else
+    // equal, paying instalments must move the balance one-for-one — this is the
+    // relationship that was broken, not merely a missing field.
+    const before = valueOfLine(transmit(maximalReturn), '000090001');
+    const after = valueOfLine(transmit(withPayments(7_500)), '000090001');
+    expect(before - after).toBe(7_500);
+  });
+
+  it('turns a balance owing into an overpayment when instalments exceed the tax', () => {
+    // The case a preparer would notice immediately if it were wrong: line 090
+    // is signed, and an overpayment is a negative balance rather than a floor
+    // at zero. Filing zero here would hide a refund the corporation is owed.
+    const taxPayable = valueOfLine(transmit(maximalReturn), '000080001');
+    const xml = transmit(withPayments(taxPayable + 3_000));
+    expect(valueOfLine(xml, '000090001')).toBeLessThan(0);
+  });
+});
+
 describe('an Innovation Employment Grant claim without a group says why', () => {
   /**
    * THE REGRESSION. `assembleIeg` used to discard the claim when no group row
@@ -486,5 +762,46 @@ describe('the Alberta ABI reconciliation reaches the deduction, not just the pag
     expect(r.sbdIncome).toBe(250_000);
     // 250,000 × 2% + 150,000 × 8% = 5,000 + 12,000.
     expect(r.taxPayable).toBe(17_000);
+  });
+});
+
+/**
+ * BUG-002 — does the Innovation Employment Grant reach line 090?
+ *
+ * Reported as "the IEG computes but never nets into credits/balance (088/090)".
+ * The printed jacket strikes 090 as
+ *
+ *   090 = 080 − (129 + 082 + 085 + 086 + 115 + 087)
+ *
+ * so a grant must reduce the balance exactly as instalments do. Asserted on the
+ * RENDERED XML rather than on the engine, because the reported symptom was a
+ * displayed balance, and the question that matters is what goes on the wire.
+ */
+describe('the Innovation Employment Grant nets into the filed balance', () => {
+  const valueOfLine = (xml: string, id: string) =>
+    Number(xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1]);
+
+  it('files the grant at 129', () => {
+    expect(valueOfLine(transmit(maximalReturn), '000129001')).toBeGreaterThan(0);
+  });
+
+  it('reduces 090 by the grant, exactly as the printed formula strikes it', () => {
+    const xml = transmit(maximalReturn);
+    const tax = valueOfLine(xml, '000080001');
+    const grant = valueOfLine(xml, '000129001');
+    const instalments = valueOfLine(xml, '000082001');
+    const balance = valueOfLine(xml, '000090001');
+    expect(balance).toBe(tax - (grant + instalments));
+  });
+
+  it('makes 090 an overpayment when the grant exceeds the tax', () => {
+    const xml = transmit(maximalReturn);
+    const tax = valueOfLine(xml, '000080001');
+    const grant = valueOfLine(xml, '000129001');
+    // The reported case: a refundable credit larger than the tax must file as a
+    // NEGATIVE balance, not floor at zero — a refund transmitted as nil is the
+    // corporation silently forgoing money it is owed.
+    if (grant > tax) expect(valueOfLine(xml, '000090001')).toBeLessThan(0);
+    else expect(valueOfLine(xml, '000090001')).toBe(tax - grant - valueOfLine(xml, '000082001'));
   });
 });
