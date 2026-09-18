@@ -199,3 +199,48 @@ describe('AT1 silent-nil review flags', () => {
     });
   });
 });
+
+describe('Alberta CCA overrides with no federal basis', () => {
+  /*
+   * `scheduleThirteen` opens `if (federalClasses.length === 0) return
+   * undefined`, so Alberta UCC and claims entered without a federal Schedule 8
+   * file nothing and vanish. The third appearance of one shape — a guard on the
+   * FEDERAL side discarding ALBERTA-side input; the IEG group and the Schedule
+   * 18 ABIL rows were the same.
+   */
+  it('flags Alberta classes that have no federal classes to override', () => {
+    expect(
+      codes('AT1', {
+        ...withIncome,
+        albertaCca13: { classes: [{ ccaClass: '8', openingUCC: 100_000, claim: 18_000 }] },
+      }),
+    ).toContain('AT1_CCA_NO_FEDERAL_BASIS');
+  });
+
+  it('says where the federal classes go', () => {
+    const msg =
+      at1SilentNilFlags(
+        'AT1',
+        { ...withIncome, albertaCca13: { classes: [{ ccaClass: '8', claim: 1 }] } },
+        {},
+      ).find((f) => f.code === 'AT1_CCA_NO_FEDERAL_BASIS')?.message ?? '';
+    expect(msg).toMatch(/S8|Capital Cost Allowance/);
+  });
+
+  it('stays quiet once a federal basis exists', () => {
+    expect(
+      codes('AT1', {
+        ...withIncome,
+        cca: { classes: [{ ccaClass: '8', openingUCC: 100_000 }] },
+        albertaCca13: { classes: [{ ccaClass: '8', claim: 18_000 }] },
+      }),
+    ).not.toContain('AT1_CCA_NO_FEDERAL_BASIS');
+  });
+
+  it('stays quiet when no Alberta override was entered — nothing is being dropped', () => {
+    expect(codes('AT1', withIncome)).not.toContain('AT1_CCA_NO_FEDERAL_BASIS');
+    expect(codes('AT1', { ...withIncome, albertaCca13: { classes: [] } })).not.toContain(
+      'AT1_CCA_NO_FEDERAL_BASIS',
+    );
+  });
+});

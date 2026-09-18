@@ -651,6 +651,43 @@ export function at1SilentNilFlags(
     });
   }
 
+  /*
+   * Alberta CCA overrides with no federal basis to override.
+   *
+   * `scheduleThirteen` starts `if (federalClasses.length === 0) return
+   * undefined`, so a return carrying Alberta UCC and claims but no federal
+   * Schedule 8 files no Schedule 13 at all and the entered figures vanish.
+   *
+   * This is the third appearance of one shape: a guard on the FEDERAL side
+   * discarding ALBERTA-side input. The Innovation Employment Grant did it when
+   * the associated group was empty, and Schedule 18 did it when no federal
+   * disposition was categorized — both dropped figures a preparer had typed.
+   *
+   * The intake itself is a larger question (an Alberta row carries only a class,
+   * an opening UCC and a claim — not additions, dispositions, AIIP or DIEP), so
+   * this does not invent one. It makes the drop visible, which is the part that
+   * is unambiguously wrong: a figure entered and silently discarded is worse
+   * than one the software declines to accept.
+   */
+  const cca13 = (ri.albertaCca13 ?? {}) as { classes?: unknown[] };
+  const albertaCcaRows = Array.isArray(cca13.classes) ? cca13.classes.length : 0;
+  const federalCcaRows = Array.isArray((ri.cca as { classes?: unknown[] } | undefined)?.classes)
+    ? ((ri.cca as { classes?: unknown[] }).classes as unknown[]).length
+    : 0;
+  if (albertaCcaRows > 0 && federalCcaRows === 0) {
+    flags.push({
+      severity: 'amber',
+      code: 'AT1_CCA_NO_FEDERAL_BASIS',
+      message:
+        `Schedule 13 has ${albertaCcaRows} Alberta CCA class(es) but the federal CCA schedule is empty, so no ` +
+        'Schedule 13 is filed and those figures are dropped. Alberta CCA is an OVERRIDE of the federal claim: ' +
+        'enter the classes on the federal Capital Cost Allowance (S8) schedule in this engagement, then state ' +
+        'the Alberta opening UCC or claim here only where Alberta differs.',
+      line: '013',
+      resolved: false,
+    });
+  }
+
   // No income basis at all — every federal input schedule empty.
   const albertaTaxableIncome = fold.albertaTaxableIncome ?? 0;
   const is = (ri.incomeStatement ?? {}) as Record<string, unknown>;
