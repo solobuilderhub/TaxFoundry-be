@@ -491,6 +491,19 @@ export const AlbertaContinuityValues = z
     nonCapitalOpening: z.number().optional(),
     capitalOpening: z.number().optional(),
     farmOpening: z.number().optional(),
+    nonCapitalCurrentYearLoss: z
+      .number()
+      .optional()
+      .describe(
+        'The current-year non-capital loss the carry-back at `nonCapitalCarrybacks` is drawn ' +
+          'from, as a POSITIVE amount. Blank = the federal figure, which is right whenever the ' +
+          'T2 is prepared here and remains the default. ' +
+          'Needed only when it is not: the engine refuses to carry back more than the ' +
+          'current-year loss (correctly — a request larger than the loss is not a request TRA ' +
+          'can accept), and with no federal return that loss reads nil, so an Alberta-side ' +
+          'carry-back had nothing to draw on. The farm and restricted-farm columns have had ' +
+          'their own stated loss for the same reason.',
+      ),
     farmCurrentYearLoss: z
       .number()
       .optional()
@@ -548,6 +561,21 @@ export const AlbertaContinuityValues = z
           'net-capital-carryback input at all), so unlike the non-capital carry-back this ' +
           'cannot default from federal and must be entered here even when the amounts happen ' +
           'to match federal’s own current-year net-capital loss.',
+      ),
+    nonCapitalCarrybacks: z
+      .array(z.object({ taxYearEnd: z.string().optional(), amount: z.number().optional() }))
+      .optional()
+      .describe(
+        'Non-capital loss carry-back request (AT1 Schedule 10’s non-capital column, lines ' +
+          '002-008), stated on the ALBERTA side. Unlike the capital and farm columns this one ' +
+          'CAN default from federal — the engine has a federal non-capital carry-back input, ' +
+          'and that remains the behaviour when this is absent, which is right whenever the T2 ' +
+          'is prepared here. ' +
+          'It could not be stated at all before. A preparer whose federal return was prepared ' +
+          'in another package had no federal carry-back to default from, so the non-capital ' +
+          'column simply did not appear — while the capital, farm and other-loss columns beside ' +
+          'it accepted Alberta-side rows perfectly well. Entered rows win over the federal ' +
+          'derivation, the same way `farmCurrentYearLoss` wins over the federal figure.',
       ),
     farmCarrybacks: z
       .array(z.object({ taxYearEnd: z.string().optional(), amount: z.number().optional() }))

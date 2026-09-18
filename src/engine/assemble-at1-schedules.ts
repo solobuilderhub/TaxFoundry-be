@@ -310,8 +310,10 @@ export function albertaSbdFacts(fed: Fed, ri: Ri) {
     // The ALBERTA active business income (Schedule 12 line 106 when the
     // preparer states a divergence, the federal figure otherwise) — Schedule 1
     // line 003 is that amount, so the deduction has to be computed on it.
-    activeBusinessIncome: albertaActiveBusinessIncome(num(fed.activeBusinessIncome), ri.albertaSchedule12)
-      .albertaAbi,
+    activeBusinessIncome: albertaActiveBusinessIncome(
+      num(fed.activeBusinessIncome),
+      ri.albertaSchedule12,
+    ).albertaAbi,
     status: ab.corporationStatus,
     ...(ab.wasCcpcThroughoutYear === 'no' ? { wasCcpcThroughoutYear: false } : {}),
     ...(isAssociated ? { isAssociated: true } : {}),
@@ -392,14 +394,38 @@ function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusi
  */
 function scheduleTen(federal: FederalT2Result, ri: Ri) {
   const c: AlbertaContinuityValues = ri.albertaContinuity ?? {};
-  const nonCapital = federal.lossCarryback;
 
   const rowsFrom = (
-    field: 'capitalCarrybacks' | 'farmCarrybacks' | 'otherLossCarrybacks',
+    field: 'nonCapitalCarrybacks' | 'capitalCarrybacks' | 'farmCarrybacks' | 'otherLossCarrybacks',
   ): { taxYearEnd: string; amount: number }[] =>
     (c[field] ?? [])
       .filter((r) => present(r?.amount))
       .map((r) => ({ taxYearEnd: String(r.taxYearEnd), amount: num(r.amount) }));
+
+  /*
+   * The non-capital column, stated on the Alberta side or defaulted from
+   * federal.
+   *
+   * It was federal-only: `federal.lossCarryback` and nothing else. So a
+   * preparer whose T2 was prepared in another package had no federal
+   * carry-back to default from and the non-capital column never appeared —
+   * while the capital, farm and other-loss columns beside it took
+   * Alberta-side rows perfectly well.
+   *
+   * Entered rows win, on the same principle as `farmCurrentYearLoss`: a
+   * figure the preparer states is a better authority than one derived from a
+   * return this app may not hold.
+   */
+  const nonCapitalCarrybackRows = rowsFrom('nonCapitalCarrybacks');
+  const nonCapital =
+    nonCapitalCarrybackRows.length > 0
+      ? computeLossCarryback({
+          currentYearLoss: present(c.nonCapitalCurrentYearLoss)
+            ? num(c.nonCapitalCurrentYearLoss)
+            : federal.losses.nonCapital.currentYearLoss,
+          carrybacks: nonCapitalCarrybackRows,
+        })
+      : federal.lossCarryback;
 
   const capitalCarrybackRows = rowsFrom('capitalCarrybacks');
   const capital =

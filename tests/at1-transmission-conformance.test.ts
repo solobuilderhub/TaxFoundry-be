@@ -933,3 +933,76 @@ describe('AT1 line 062 is taxable income BEFORE allocation', () => {
     expect(lineOf(xml, '000068001')).toBe(Math.round(0.08 * amountTaxableInAlberta));
   });
 });
+
+/**
+ * Schedule 10's non-capital column can be stated on the Alberta side.
+ *
+ * It was the only one of the four that could not. `scheduleTen` read
+ * `federal.lossCarryback` and nothing else, while the capital, farm and
+ * other-loss columns beside it all accepted Alberta-side rows — so a preparer
+ * whose federal return was prepared in another package could request a capital
+ * carry-back but not a non-capital one, the commonest kind. An asymmetry with
+ * no reason behind it: federal HAS a non-capital carry-back input, so the
+ * default worked, and nobody noticed the case where there is no federal return
+ * to default from.
+ *
+ * The federal derivation is untouched and still the default.
+ */
+describe('AT1 Schedule 10 — the non-capital carry-back', () => {
+  const at1Only = (extra: Record<string, unknown>): Record<string, unknown> => ({
+    identification: { corpType: 'ccpc', province: 'AB' },
+    alberta: {
+      albertaTaxableIncome: 400_000,
+      grossRevenue: 900_000,
+      totalAssets: 500_000,
+      associatedWithCcpcs: 'no',
+      windUpOfSubsidiary: 'no',
+      firstYearAfterAmalgamation: 'no',
+      taxYearEndChanged: 'no',
+      finalReturn: 'no',
+      transferOfProperty: 'no',
+      reportsDifferentAlbertaIncome: 'no',
+      electsDifferentDiscretionaryAmounts: 'yes',
+      preparedByTaxPreparerForFee: 'yes',
+    },
+    albertaSbd: { corporationStatus: 'ccpc' },
+    ...extra,
+  });
+  const sentUnder = (input: Record<string, unknown>) =>
+    transmitted(transmit(input)).get('010') ?? new Set<string>();
+
+  it('files the non-capital column from Alberta-side rows with no federal return', () => {
+    const sent = sentUnder(
+      at1Only({
+        albertaContinuity: {
+          nonCapitalOpening: 50_000,
+          // The loss the request is drawn from. Without it the engine refuses
+          // the carry-back — correctly, since with no federal return the
+          // current-year loss reads nil and a request larger than the loss is
+          // not one TRA can accept.
+          nonCapitalCurrentYearLoss: 12_000,
+          nonCapitalCarrybacks: [{ taxYearEnd: '2023-12-31', amount: 9_500 }],
+        },
+      }),
+    );
+    // 002 is the column's current-year loss and 004 the first preceding year —
+    // neither appeared at all when the column could only come from federal.
+    expect(sent.has('004'), 'non-capital 1st preceding year').toBe(true);
+  });
+
+  it('files nothing for the column when no rows are stated and there is no federal loss', () => {
+    expect(
+      sentUnder(at1Only({ albertaContinuity: { nonCapitalOpening: 50_000 } })).has('004'),
+    ).toBe(false);
+  });
+
+  it('leaves the federal derivation as the default', () => {
+    // `maximalReturn` states no Alberta non-capital rows, so anything filed in
+    // that column still comes from the federal return — the behaviour this
+    // change must not disturb.
+    expect(
+      (maximalReturn.albertaContinuity as Record<string, unknown>).nonCapitalCarrybacks,
+    ).toBeUndefined();
+    expect(() => transmit(maximalReturn)).not.toThrow();
+  });
+});
