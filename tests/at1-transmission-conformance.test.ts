@@ -1006,3 +1006,61 @@ describe('AT1 Schedule 10 — the non-capital carry-back', () => {
     expect(() => transmit(maximalReturn)).not.toThrow();
   });
 });
+
+/**
+ * A short taxation year prorates the Alberta base amount, end to end.
+ *
+ * The rule is AT1 Schedule 1's own Area B: "If the taxation year is shorter
+ * than 51 weeks, the corporation's base amount is the amount allocated to it
+ * multiplied by the ratio that the number of days in the year is to 365."
+ *
+ * Nothing applied it, so a stub year claimed the whole annual limit — too much
+ * deduction, therefore too little Alberta tax. Stub years are ordinary:
+ * incorporation, amalgamation, wind-up and an approved year-end change each
+ * produce one, and this app asks about the last two on the jacket (032, 038).
+ *
+ * The federal side already prorated correctly — `computeFederalT2` derives the
+ * factor from the period itself — which is part of why the Alberta gap was easy
+ * to miss: the same return was right federally and wrong provincially.
+ *
+ * Asserted through the real chain rather than on the engine, because the engine
+ * only prorates when it is given the period, and the question here is whether
+ * the server hands it over.
+ */
+describe('a short Alberta taxation year prorates the base amount', () => {
+  const stub = (taxYearEnd: Date) => {
+    const assembled = assembleT2Input(
+      { ...maximalReturn } as never,
+      { taxYearStart, taxYearEnd, program: 'AT1' } as never,
+    ) as Record<string, unknown>;
+    const p = assembled.period as { start: string; end: string; label: string };
+    const fed = {
+      ...assembled,
+      period: { start: new Date(p.start), end: new Date(p.end), label: p.label },
+    };
+    const computed = runAT1Compute(
+      assembleProvincialInput('AT1', fed, maximalReturn as never, { isCcpc: true }),
+    ) as Computed;
+    return Number(
+      computed.fields.find((f) => f.line === 'albertaSmallBusinessDeduction')?.value ?? 0,
+    );
+  };
+
+  it('claims less on a half year than on a full one', () => {
+    const full = stub(new Date('2024-12-31'));
+    const half = stub(new Date('2024-06-30')); // 182 days
+    expect(full).toBeGreaterThan(0);
+    expect(half).toBeLessThan(full);
+  });
+
+  it('prorates by the DAYS, not by a flat fraction', () => {
+    // Two different stub lengths must give two different deductions. The exact
+    // days ÷ 365 ratio is asserted in ca-tax's own unit tests, in isolation:
+    // here the deduction is the LESSER of active business income, the limit and
+    // taxable income, and the general rate is day-weighted over the same
+    // period, so measuring the ratio off this fixture would be measuring three
+    // effects at once. This asserts the one thing this layer owns — that the
+    // period reaches the engine at all.
+    expect(stub(new Date('2024-06-30'))).not.toBe(stub(new Date('2024-03-31')));
+  });
+});
