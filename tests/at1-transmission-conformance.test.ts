@@ -883,3 +883,53 @@ describe('an AT1 whose federal return was prepared elsewhere', () => {
     expect(lineValue(xml, '000062001')).toBe(0);
   });
 });
+
+/**
+ * Line 062 discloses taxable income; line 065 allocates it.
+ *
+ * These were one number. The engine computed `federalTaxableIncome ×
+ * allocationFactor` and filed THAT at 062, so every return with a permanent
+ * establishment outside Alberta understated its taxable income by the
+ * allocation — on a mandatory line.
+ *
+ * The tax was right, which is why nothing noticed: tax is computed on the
+ * allocated base either way. But the return did not RECONCILE. TRA can
+ * recompute from what was filed: 066 = 062 × 065, then the rate on 066. From a
+ * filed 062 of 870,000 and a factor of 0.725 that yields 630,750 and about
+ * 50,460 of tax — against the 69,600 actually filed at 068.
+ *
+ * Two independent sources fix the meaning of 062, neither ambiguous:
+ *
+ *   §3.2.3.1   "If both 000060 and 000061 = 2, value = … default = fed 200360
+ *              − fed 200370" — federal taxable income, no factor.
+ *   AT1SCH12   line 090 "Taxable income for Alberta purposes", noted "Carried
+ *              to AT1 page 2, line 062" — and Schedule 12 performs no
+ *              allocation; that is Schedule 2, at line 065.
+ *
+ * Single-jurisdiction returns are identical either way (factor 1.0), which is
+ * exactly why this survived: almost every fixture has one jurisdiction.
+ */
+describe('AT1 line 062 is taxable income BEFORE allocation', () => {
+  const lineOf = (xml: string, id: string) =>
+    Number(xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1]);
+
+  it('files the whole figure at 062, not the allocated share', () => {
+    const xml = transmit(maximalReturn);
+    const factor = Number(xml.match(/<Value LineItemID="000065001">([^<]*)</)?.[1]);
+    expect(factor, 'this fixture must be multi-jurisdiction or it proves nothing').toBeLessThan(1);
+    const taxableIncome = lineOf(xml, '000062001');
+    const basicTax = lineOf(xml, '000068001');
+    // 068 is struck on the ALLOCATED base, so it must be smaller than the rate
+    // applied to the whole of 062 — the relationship that fails when the
+    // allocated figure is filed at 062.
+    expect(taxableIncome).toBeGreaterThan(basicTax / 0.08);
+  });
+
+  it("reconciles against the form's own arithmetic: 068 = rate × (062 × 065)", () => {
+    const xml = transmit(maximalReturn);
+    const taxableIncome = lineOf(xml, '000062001');
+    const factor = Number(xml.match(/<Value LineItemID="000065001">([^<]*)</)?.[1]);
+    const amountTaxableInAlberta = Math.round(taxableIncome * factor); // line 066
+    expect(lineOf(xml, '000068001')).toBe(Math.round(0.08 * amountTaxableInAlberta));
+  });
+});

@@ -108,10 +108,25 @@ export function assembleProvincialInput(
      */
     const enteredTaxableIncome = (ri.alberta as { albertaTaxableIncome?: number } | undefined)
       ?.albertaTaxableIncome;
-    const albertaTaxableIncome =
+    // Line 062 — taxable income BEFORE allocation, entered or derived.
+    const taxableIncomeBeforeAllocation =
       enteredTaxableIncome != null && Number.isFinite(Number(enteredTaxableIncome))
         ? Math.round(Number(enteredTaxableIncome))
-        : Math.round(allocationFactor * federalTaxableIncome);
+        : federalTaxableIncome;
+    /*
+     * Line 066 — the income actually taxable in Alberta, and the figure the
+     * SCHEDULES work from: Schedule 1 caps the small business deduction by it,
+     * and Schedule 12 reconciles against it.
+     *
+     * Kept distinct from 062 because they are different lines. They used to be
+     * one number here and in the engine, and the allocated one was filed at
+     * 062 — understating taxable income on every return with a permanent
+     * establishment outside Alberta.
+     */
+    const albertaTaxableIncome = Math.max(
+      0,
+      Math.round(allocationFactor * taxableIncomeBeforeAllocation),
+    );
 
     // `period.end` is already a real `Date` by this point — `at1Engine.validate`
     // (downstream) throws otherwise, so every engine input reaching here already
@@ -186,8 +201,10 @@ export function assembleProvincialInput(
       // `federalTaxableIncome × allocationFactor` itself, so a figure resolved
       // only here would be silently discarded — which is exactly what happened
       // on the first attempt at this.
+      // The engine's own 062 input is the PRE-allocation figure; it applies the
+      // factor itself at 066. Passing the allocated one would double-allocate.
       ...(enteredTaxableIncome != null && Number.isFinite(Number(enteredTaxableIncome))
-        ? { albertaTaxableIncome: Math.round(Number(enteredTaxableIncome)) }
+        ? { albertaTaxableIncome: taxableIncomeBeforeAllocation }
         : {}),
       ...(sbdFacts ?? {}),
       ...(allocation ? { allocation } : {}),
