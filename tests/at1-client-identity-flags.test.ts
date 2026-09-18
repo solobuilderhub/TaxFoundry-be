@@ -109,3 +109,93 @@ describe('AT1 client identity review flags', () => {
     expect(codesOf({ ...complete, natureOfBusiness: '9999' })).toEqual([]);
   });
 });
+
+import { at1SilentNilFlags } from '../src/review/review-generator.service.js';
+
+/**
+ * A claim that computes to nothing, said out loud.
+ *
+ * The defect here is SILENCE. A schedule can be present, answered, and worth
+ * real money, and still produce zero because one input nobody asked for is
+ * missing — and the return then files a nil claim with nothing saying a claim
+ * was attempted at all. The preparer sees a schedule they filled in and a
+ * figure of $0, with no way to tell whether that is the right answer.
+ */
+const codes = (program: string, ri: Record<string, unknown>, fold: Record<string, number> = {}) =>
+  at1SilentNilFlags(program, ri, fold).map((f) => f.code);
+
+const withIncome = { incomeStatement: { revenue: 1_000_000 } };
+
+describe('AT1 silent-nil review flags', () => {
+  it('ignores non-AT1 programs', () => {
+    expect(at1SilentNilFlags('T2', {}, {})).toEqual([]);
+  });
+
+  describe('Schedule 29 — an IEG claim with no members roster', () => {
+    it('flags a claim whose roster is empty, because it computes to $0', () => {
+      // The real case: the agreement table filled, the roster empty, and the
+      // grant silently nil. Adding the roster on one test return moved it from
+      // $0 to $31,250 with no warning at any point in between.
+      expect(
+        codes('AT1', { ...withIncome, albertaIeg: { federalAmount: 200_000, group: [] } }),
+      ).toContain('AT1_IEG_NO_GROUP_ROSTER');
+    });
+
+    it('flags it when the claim is expressed only as projects', () => {
+      expect(
+        codes('AT1', { ...withIncome, albertaIeg: { projects: [{ title: 'Project A' }] } }),
+      ).toContain('AT1_IEG_NO_GROUP_ROSTER');
+    });
+
+    it('stays quiet once the roster is supplied', () => {
+      expect(
+        codes('AT1', {
+          ...withIncome,
+          albertaIeg: { federalAmount: 200_000, group: [{ name: 'Claimant Ltd.' }] },
+        }),
+      ).not.toContain('AT1_IEG_NO_GROUP_ROSTER');
+    });
+
+    it('stays quiet when no grant was claimed at all', () => {
+      // Nothing attempted is not a silent nil — it is simply a return with no
+      // IEG, which is most of them.
+      expect(codes('AT1', withIncome)).not.toContain('AT1_IEG_NO_GROUP_ROSTER');
+      expect(codes('AT1', { ...withIncome, albertaIeg: {} })).not.toContain(
+        'AT1_IEG_NO_GROUP_ROSTER',
+      );
+    });
+  });
+
+  describe('no income basis — the whole tax side reads zero', () => {
+    it('explains why 062 and everything under it is nil', () => {
+      // Not a bug: the AT1 is computed FROM the federal figures. But a preparer
+      // working behind the "AT1 only" nav filter sees every number at zero with
+      // nothing saying which schedules are missing.
+      expect(codes('AT1', {}, { albertaTaxableIncome: 0 })).toContain('AT1_NO_INCOME_BASIS');
+    });
+
+    it('points at the federal schedules and at the filter hiding them', () => {
+      const msg = at1SilentNilFlags('AT1', {}, { albertaTaxableIncome: 0 })[0]?.message ?? '';
+      expect(msg).toMatch(/GIFI 125/);
+      expect(msg).toMatch(/AT1 only/);
+    });
+
+    it('stays quiet once any income figure is entered', () => {
+      expect(codes('AT1', withIncome, { albertaTaxableIncome: 0 })).not.toContain(
+        'AT1_NO_INCOME_BASIS',
+      );
+    });
+
+    it('stays quiet for a return that has computed real Alberta income', () => {
+      expect(codes('AT1', withIncome, { albertaTaxableIncome: 1_200_000 })).not.toContain(
+        'AT1_NO_INCOME_BASIS',
+      );
+    });
+
+    it('does not fire on an expense-only return — that is a real loss, not an empty one', () => {
+      expect(
+        codes('AT1', { incomeStatement: { otherExpenses: 40_000 } }, { albertaTaxableIncome: 0 }),
+      ).not.toContain('AT1_NO_INCOME_BASIS');
+    });
+  });
+});

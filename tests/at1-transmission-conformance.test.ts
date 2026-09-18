@@ -805,3 +805,81 @@ describe('the Innovation Employment Grant nets into the filed balance', () => {
     else expect(valueOfLine(xml, '000090001')).toBe(tax - grant - valueOfLine(xml, '000082001'));
   });
 });
+
+/**
+ * An AT1 prepared WITHOUT the federal T2 in this app.
+ *
+ * The normal path computes Alberta taxable income as federal taxable income ×
+ * the allocation factor, which is right whenever the T2 is prepared here. It is
+ * not the only way an AT1 gets prepared: where the federal return was done in
+ * another package there is nothing to derive from, so the federal engine sees
+ * an empty return, taxable income is nil, and the entire Alberta tax side
+ * collapses to zero — 062, 068, 070 and 080 all $0 — with no way for the
+ * preparer to say otherwise.
+ *
+ * TRA's own jacket does not work that way: it types 062 as an INPUT, because
+ * the figure can come off a federal return the preparer is holding on paper.
+ *
+ * The reference case (P03, an $18M-grind return checked against AuraTax):
+ *
+ *   062  1,200,000   entered
+ *   068     96,000   basic tax
+ *   070     30,000   small business deduction
+ *   080     66,000   tax payable
+ */
+describe('an AT1 whose federal return was prepared elsewhere', () => {
+  const at1Only: Record<string, unknown> = {
+    identification: { corpType: 'ccpc', province: 'AB' },
+    alberta: {
+      albertaTaxableIncome: 1_200_000,
+      grossRevenue: 5_000_000,
+      totalAssets: 3_000_000,
+      associatedWithCcpcs: 'no',
+      windUpOfSubsidiary: 'no',
+      firstYearAfterAmalgamation: 'no',
+      taxYearEndChanged: 'no',
+      finalReturn: 'no',
+      transferOfProperty: 'no',
+      reportsDifferentAlbertaIncome: 'no',
+      electsDifferentDiscretionaryAmounts: 'no',
+      preparedByTaxPreparerForFee: 'yes',
+    },
+    albertaSbd: { corporationStatus: 'ccpc' },
+  };
+  const lineValue = (xml: string, id: string) =>
+    Number(xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1]);
+
+  it('no longer collapses to nil with no federal figures at all', () => {
+    const xml = transmit(at1Only);
+    expect(lineValue(xml, '000062001')).toBe(1_200_000);
+    expect(lineValue(xml, '000068001')).toBeGreaterThan(0);
+    expect(lineValue(xml, '000080001')).toBeGreaterThan(0);
+  });
+
+  it('files the entered figure as the Alberta figure, not re-allocated', () => {
+    // The box is captioned "Alberta taxable income" — already allocated. Running
+    // the allocation factor over it again would shrink a figure the preparer
+    // read straight off their federal return.
+    expect(lineValue(transmit(at1Only), '000062001')).toBe(1_200_000);
+  });
+
+  it('still derives 062 when nothing is entered — the default path is untouched', () => {
+    const derived = transmit(maximalReturn);
+    const entered = lineValue(derived, '000062001');
+    expect(entered).toBeGreaterThan(0);
+    // And it is the DERIVED figure, not any entered one: `maximalReturn` states
+    // no 062, so this proves the override is genuinely opt-in.
+    expect((maximalReturn.alberta as Record<string, unknown>).albertaTaxableIncome).toBeUndefined();
+  });
+
+  it('computes nil when neither a federal return nor an entered figure exists', () => {
+    const { albertaTaxableIncome: _omitted, ...albertaWithout } = at1Only.alberta as Record<
+      string,
+      unknown
+    >;
+    const xml = transmit({ ...at1Only, alberta: albertaWithout });
+    // Unchanged behaviour, and correct — there is genuinely nothing to report.
+    // The review layer raises AT1_NO_INCOME_BASIS so it is not silent.
+    expect(lineValue(xml, '000062001')).toBe(0);
+  });
+});

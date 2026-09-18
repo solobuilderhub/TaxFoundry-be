@@ -85,6 +85,17 @@ export const AlbertaValues = z
     // were uncollectable. Two of them are gated on questions this app ASKS,
     // so the app itself could produce a return that broke TRA's rule — answer
     // "Yes" to 038 or 050 and the required follow-up had nowhere to go.
+    albertaTaxableIncome: z
+      .number()
+      .optional()
+      .describe(
+        '000062 — Alberta taxable income or (loss), ENTERED rather than derived. Leave blank on a ' +
+          'return whose T2 is prepared in this app: the engine then computes it as federal taxable ' +
+          'income × the allocation factor, which is the normal path. Supply it when the federal ' +
+          'return was prepared elsewhere and there is nothing here to derive from — TRA’s own jacket ' +
+          'types 062 as an input for exactly that case. Enter the ALBERTA figure, already allocated; ' +
+          'the allocation factor is not applied again.',
+      ),
     specialCorporationStatus: z
       .string()
       .optional()

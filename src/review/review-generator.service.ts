@@ -572,6 +572,111 @@ export function at1ClientIdentityFlags(
 }
 
 /**
+ * Claims that quietly compute to nothing on an AT1.
+ *
+ * The defect these exist for is SILENCE, not arithmetic. A schedule that is
+ * present, answered, and worth real money can still produce zero because one
+ * input nobody asked for is missing — and the return then files a nil claim
+ * with nothing anywhere saying a claim was even attempted. The preparer sees a
+ * schedule they filled in and a figure of $0 and has no way to tell whether
+ * that is the right answer.
+ *
+ * Two real cases:
+ *
+ *   029  An Innovation Employment Grant with the agreement table filled but the
+ *        associated-group MEMBERS ROSTER empty computes $0. Adding the roster
+ *        on one test return flipped the grant from $0 to $31,250 — a figure the
+ *        corporation is entitled to, silently forgone, with no warning at any
+ *        point.
+ *   062  An AT1 whose federal input schedules were never filled in has no
+ *        income basis, so Alberta taxable income is nil and the whole tax side
+ *        (068/070/080) follows it down. This is the app working as designed —
+ *        the AT1 derives from the federal figures — but a preparer working
+ *        behind the "AT1 only" nav filter cannot see WHY every number is zero.
+ *        The flag names the cause and where to fix it.
+ *
+ * Amber, not red: each is a return that may legitimately be nil. The point is
+ * that the preparer decides that, rather than the software deciding it silently.
+ */
+export function at1SilentNilFlags(
+  program: string,
+  ri: Partial<ReturnInput>,
+  fold: Record<string, number>,
+): Flag[] {
+  if (program !== 'AT1') return [];
+  const flags: Flag[] = [];
+
+  const ieg = (ri.albertaIeg ?? {}) as Record<string, unknown>;
+  const iegAttempted =
+    num(ieg.federalAmount) > 0 ||
+    num(ieg.albertaPortion) > 0 ||
+    (Array.isArray(ieg.projects) && ieg.projects.length > 0);
+  const roster = Array.isArray(ieg.group) ? ieg.group : [];
+  if (iegAttempted && roster.length === 0) {
+    flags.push({
+      severity: 'amber',
+      code: 'AT1_IEG_NO_GROUP_ROSTER',
+      message:
+        'Schedule 29 has an Innovation Employment Grant claim but no associated-group members roster, so the grant computes to $0. ' +
+        'The roster supplies the taxable capital the grind is measured on — without it the claim cannot be calculated, and the ' +
+        'return would file a nil grant. Add the members (the claimant corporation itself included) on Schedule 29, then recompute.',
+      citation: 'Alberta Corporate Tax Act s.26.7',
+      line: '029',
+      resolved: false,
+    });
+  }
+
+  /*
+   * Alberta taxable income stated rather than derived.
+   *
+   * Not a problem — it is how an AT1 gets prepared when the T2 was done in
+   * another package, and TRA's jacket types 062 as an input for that case. But
+   * it bypasses the engine, so it must READ as entered: every other figure on
+   * the return is derived and carries that provenance, and a stated one sitting
+   * among them with no marking is the kind of thing a reviewer should see once,
+   * not discover later.
+   */
+  const ab = (ri.alberta ?? {}) as Record<string, unknown>;
+  const entered062 = ab.albertaTaxableIncome;
+  if (entered062 != null && String(entered062).trim() !== '') {
+    flags.push({
+      severity: 'amber',
+      code: 'AT1_TAXABLE_INCOME_ENTERED',
+      message:
+        `Alberta taxable income (062) was ENTERED as ${money(num(entered062))} rather than computed from the federal return. ` +
+        'Basic tax, the small business deduction and tax payable all follow from it, so the figure carries the whole ' +
+        'Alberta tax calculation — check it against the federal return it came from before signing off.',
+      line: '062',
+      resolved: false,
+    });
+  }
+
+  // No income basis at all — every federal input schedule empty.
+  const albertaTaxableIncome = fold.albertaTaxableIncome ?? 0;
+  const is = (ri.incomeStatement ?? {}) as Record<string, unknown>;
+  const hasIncomeBasis =
+    num(is.revenue) !== 0 ||
+    num(is.costOfSales) !== 0 ||
+    num(is.salariesAndWages) !== 0 ||
+    num(is.amortization) !== 0 ||
+    num(is.otherExpenses) !== 0;
+  if (!hasIncomeBasis && albertaTaxableIncome === 0) {
+    flags.push({
+      severity: 'amber',
+      code: 'AT1_NO_INCOME_BASIS',
+      message:
+        'Alberta taxable income (062) is $0 because no federal income figures have been entered, so basic tax (068), the small ' +
+        'business deduction (070) and tax payable (080) are all nil. The AT1 is computed FROM the federal figures — enter the ' +
+        'Income Statement (GIFI 125) and the other federal input schedules in this engagement. They are in the schedule list ' +
+        'under "All"; the "AT1 only" filter hides them.',
+      line: '062',
+      resolved: false,
+    });
+  }
+  return flags;
+}
+
+/**
  * AT1 line 090 — the Net File specification and the printed form disagree, and
  * this says so on any return where the disagreement changes the number.
  *
@@ -707,6 +812,9 @@ export async function runReview(params: {
     // whole return. The renderer still refuses — this just says so earlier.
     ...at1ClientIdentityFlags(String(engagement.program), client),
     ...at1BalanceFormulaFlags(String(engagement.program), fold),
+    // A claim that computes to nothing, said out loud. See the doc comment —
+    // the defect is the silence, not the arithmetic.
+    ...at1SilentNilFlags(String(engagement.program), ri, fold),
   ];
 
   // Upsert the open (not signed-off) memo for this engagement.

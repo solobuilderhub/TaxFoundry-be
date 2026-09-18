@@ -80,7 +80,38 @@ export function assembleProvincialInput(
     const allocationFactor = allocation
       ? computeAllocationFactor(allocation)
       : SINGLE_JURISDICTION_ALBERTA_FACTOR;
-    const albertaTaxableIncome = Math.round(allocationFactor * federalTaxableIncome);
+    /*
+     * Line 062 — Alberta taxable income, derived from the federal return
+     * UNLESS the preparer states it.
+     *
+     * The AT1 is normally computed from the federal figures: taxable income
+     * times the allocation factor. That is right whenever the T2 is prepared
+     * here, and it is the default below.
+     *
+     * It is not the only way an AT1 gets prepared. Where the T2 was done in
+     * another package, there is nothing to derive from — the federal engine
+     * sees an empty return, taxable income is nil, and the whole Alberta tax
+     * side collapses to zero with the preparer unable to say otherwise. The
+     * printed form does not work that way: TRA's own jacket types 062 as an
+     * INPUT ("Alberta taxable income or (loss)"), because the figure can come
+     * off a federal return the preparer holds on paper.
+     *
+     * So an entered figure wins, and nothing else changes: the override is
+     * opt-in, absent on every return that does not use it, and the derivation
+     * is untouched underneath. The allocation factor is deliberately NOT
+     * applied to it — a preparer entering Alberta taxable income is entering
+     * the Alberta figure, already allocated, exactly as the box is captioned.
+     *
+     * `AT1_TAXABLE_INCOME_ENTERED` reports it in review, because a figure that
+     * bypasses the engine has to be visible as such rather than reading like a
+     * computed one.
+     */
+    const enteredTaxableIncome = (ri.alberta as { albertaTaxableIncome?: number } | undefined)
+      ?.albertaTaxableIncome;
+    const albertaTaxableIncome =
+      enteredTaxableIncome != null && Number.isFinite(Number(enteredTaxableIncome))
+        ? Math.round(Number(enteredTaxableIncome))
+        : Math.round(allocationFactor * federalTaxableIncome);
 
     // `period.end` is already a real `Date` by this point — `at1Engine.validate`
     // (downstream) throws otherwise, so every engine input reaching here already
@@ -150,6 +181,14 @@ export function assembleProvincialInput(
       period,
       federalTaxableIncome,
       activeBusinessIncome,
+      // Line 062 stated rather than derived. Forwarded to the ENGINE, not just
+      // used locally: `computeAlbertaTax` recomputes 062 from
+      // `federalTaxableIncome × allocationFactor` itself, so a figure resolved
+      // only here would be silently discarded — which is exactly what happened
+      // on the first attempt at this.
+      ...(enteredTaxableIncome != null && Number.isFinite(Number(enteredTaxableIncome))
+        ? { albertaTaxableIncome: Math.round(Number(enteredTaxableIncome)) }
+        : {}),
       ...(sbdFacts ?? {}),
       ...(allocation ? { allocation } : {}),
       ...(num(ab.manufacturingDeduction) > 0
