@@ -36,6 +36,22 @@ export interface EngineComputeOutput {
   schedulePayloads?: {
     scheduleId: string;
     values: { lineItemId: string; value: string | number }[];
+    /**
+     * PRINT-ONLY lines — computed, shown, never transmitted. See ca-tax's
+     * `At1ScheduleData.display`.
+     *
+     * Carried here so the paper Form Views can render the subtotals the page
+     * prints (Schedule 12's 052/080/081, Schedule 18's column totals and
+     * capital-gain working, Schedule 21's 013/015 and its whole RIFE
+     * continuity). Those were computed inside the engine, consumed, and
+     * discarded — so every one of them rendered as a "Computed" badge over an
+     * empty cell.
+     *
+     * The filing path must never read this: `renderAt1NetFile` and the RSI
+     * adapter both iterate `values`, which is exactly why this is a sibling
+     * array rather than a flag inside it.
+     */
+    display?: { lineItemId: string; value: string | number }[];
   }[];
   /**
    * Anything the schedules want the preparer to see — a fail-closed default

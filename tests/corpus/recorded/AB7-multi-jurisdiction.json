@@ -7,6 +7,8 @@
     "001:001007001": 500000,
     "001:001009001": 362500,
     "001:001013001": 362500,
+    "001:001015001": 200000,
+    "001:001021001": ".725000",
     "002:002001001": 2,
     "002:002002001": 300000,
     "002:002004001": 400000,
@@ -94,6 +96,16 @@
     "field:allocationFactor": 0.725,
     "field:basicAlbertaTax": 29000,
     "field:innovationEmploymentGrant": 0,
+    "field:sbdAreaB.aaiiOverThreshold": 0,
+    "field:sbdAreaB.baseAmount": 200000,
+    "field:sbdAreaB.daysInTaxYear": 366,
+    "field:sbdAreaB.reducedBusinessLimit": 200000,
+    "field:sbdAreaB.reductionApplied": 0,
+    "field:sbdAreaB.reductionPassiveIncome": 0,
+    "field:sbdAreaB.reductionTaxableCapital": 0,
+    "field:sbdAreaB.taxableCapital": 0,
+    "field:sbdAreaB.taxableCapitalFactor": 0,
+    "field:sbdAreaB.thresholdForReduction": 200000,
     "field:totalOwing": 725000
   }
 }

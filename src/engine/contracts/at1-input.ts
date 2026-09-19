@@ -1280,6 +1280,9 @@ export const AlbertaSchedule18Values = z
       .describe(
         'One row per small business corporation disposed of at a loss. 018094 (the allowable business investment loss, at the inclusion rate) is computed from these — not entered directly.',
       ),
+    electingPropertyTransfer: YesNo.optional().describe(
+      'AT1 018001 — "Is the corporation electing to transfer property as stated under ACTA section 14.1(3), 14.2(3) or 16.1(3)?" MANDATORY on the wire, and §3.2.3.19 supplies its own default: Yes files 1, anything else files 2. Unlike the nine yes/no questions on the AT1 jacket — where the specification gives no default, so a silent No would answer for the corporation — leaving this blank is a No on the instruction of TRA itself. Answering Yes also obliges form AT107, AT108 or AT109 to be submitted with the RSI, which this product does not produce; the schedule raises that as a review issue.',
+    ),
   })
   .meta({ id: 'AlbertaSchedule18Values' });
 

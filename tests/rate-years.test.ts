@@ -58,13 +58,20 @@ describe('registerRateYears', () => {
        * not make obvious: it writes the taxable-capital reduction as
        * `A × B / $90,000` with B = `(taxable capital − $10M) × 0.225%`, and at
        * $50M that is exactly the divisor — the same $10M→$50M straight line.
-       * The passive-income one is `(limit) / 100,000 × (AAII − $50,000)`,
-       * which on a $500,000 limit is $5 per $1.
+       * The passive-income one is `(lesser of a or b) / 100,000 × (AAII −
+       * $50,000)`, which on a $500,000 base amount is $5 per $1 — and ONLY on
+       * a $500,000 base amount. The book used to store that $5, which dropped
+       * the base-amount term and over-ground every associated corporation and
+       * every short year. It stores the form's own divisor now.
        */
       TC_GRIND_LOWER: 10_000_000,
       TC_GRIND_UPPER: 50_000_000,
       AAII_THRESHOLD: 50_000,
-      AAII_REDUCTION_PER_DOLLAR: 5,
+      AAII_REDUCTION_DIVISOR: 100_000,
+      // Area B's amount-B ceiling, and the divisor of the same name in
+      // "[A x (B / 90000)]". In the book rather than a constant because the
+      // form carries both eras: $11,250 before April 7 2022, $90,000 after.
+      TC_GRIND_MAX_REDUCTION: 90_000,
     });
   });
 

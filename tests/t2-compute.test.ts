@@ -3,8 +3,8 @@
  * result into provenance-tagged fields, and the provenance guard runs on real
  * engine output. Pure — no DB.
  */
-import { describe, it, expect } from 'vitest';
-import { runT2Compute, verifyT2Reproducible, T2_ENGINE_VERSION } from '../src/engine/t2-compute.js';
+import { describe, expect, it } from 'vitest';
+import { runT2Compute, T2_ENGINE_VERSION, verifyT2Reproducible } from '../src/engine/t2-compute.js';
 
 const period = { start: new Date('2024-01-01'), end: new Date('2024-12-31'), label: '2024' };
 
@@ -24,7 +24,13 @@ describe('runT2Compute', () => {
   });
 
   it('tags every computed field with provenance "engine" and passes the guard', () => {
-    const out = runT2Compute({ period, bookNetIncome: 195000, activeBusinessIncome: 195000, taxableCapital: 2000000, isCcpc: true });
+    const out = runT2Compute({
+      period,
+      bookNetIncome: 195000,
+      activeBusinessIncome: 195000,
+      taxableCapital: 2000000,
+      isCcpc: true,
+    });
     expect(out.fields.every((f) => f.provenance === 'engine')).toBe(true);
     const partI = out.fields.find((f) => f.line === 'partITaxPayable');
     expect(partI?.value).toBe(17550);
@@ -33,7 +39,10 @@ describe('runT2Compute', () => {
   });
 
   it('records an AdjustmentComputed fact stamped with the engine version', () => {
-    const out = runT2Compute({ period, bookNetIncome: 195000, activeBusinessIncome: 195000 }, 'user:abc');
+    const out = runT2Compute(
+      { period, bookNetIncome: 195000, activeBusinessIncome: 195000 },
+      'user:abc',
+    );
     expect(out.fact.type).toBe('AdjustmentComputed');
     expect(out.fact.provenance).toBe('engine');
     expect(out.fact.actor).toBe('user:abc');
@@ -46,7 +55,12 @@ describe('runT2Compute', () => {
   });
 
   it('IGNORES caller-supplied rates / taxYear — the host book is authoritative', () => {
-    const honest = runT2Compute({ period, bookNetIncome: 195000, activeBusinessIncome: 195000, taxableCapital: 2000000 });
+    const honest = runT2Compute({
+      period,
+      bookNetIncome: 195000,
+      activeBusinessIncome: 195000,
+      taxableCapital: 2000000,
+    });
     // A malicious caller tries to smuggle a zero-tax rate table and a wrong year.
     const smuggled = runT2Compute({
       period,
@@ -54,11 +68,25 @@ describe('runT2Compute', () => {
       activeBusinessIncome: 195000,
       taxableCapital: 2000000,
       rates: {
-        BASIC_RATE: 0, FEDERAL_ABATEMENT: 0, SBD_RATE: 0, GENERAL_RATE_REDUCTION: 0, BUSINESS_LIMIT: 0,
-        TC_GRIND_LOWER: 0, TC_GRIND_UPPER: 1, AAII_THRESHOLD: 0, AAII_REDUCTION_PER_DOLLAR: 0,
-        PART_IV_RATE: 0, REFUNDABLE_PART_I_RATE: 0, CAPITAL_GAINS_INCLUSION_RATE: 0, GRIP_FACTOR: 0,
-        SRED_ITC_ENHANCED_RATE: 0, SRED_ITC_BASIC_RATE: 0, SRED_EXPENDITURE_LIMIT: 0,
-        DONATION_INCOME_LIMIT_RATE: 0, ZETM_GENERAL_RATE: 0, ZETM_SBD_RATE: 0,
+        BASIC_RATE: 0,
+        FEDERAL_ABATEMENT: 0,
+        SBD_RATE: 0,
+        GENERAL_RATE_REDUCTION: 0,
+        BUSINESS_LIMIT: 0,
+        TC_GRIND_LOWER: 0,
+        TC_GRIND_UPPER: 1,
+        AAII_THRESHOLD: 0,
+        AAII_REDUCTION_DIVISOR: 1,
+        PART_IV_RATE: 0,
+        REFUNDABLE_PART_I_RATE: 0,
+        CAPITAL_GAINS_INCLUSION_RATE: 0,
+        GRIP_FACTOR: 0,
+        SRED_ITC_ENHANCED_RATE: 0,
+        SRED_ITC_BASIC_RATE: 0,
+        SRED_EXPENDITURE_LIMIT: 0,
+        DONATION_INCOME_LIMIT_RATE: 0,
+        ZETM_GENERAL_RATE: 0,
+        ZETM_SBD_RATE: 0,
       },
       taxYear: 1990,
     } as unknown as Parameters<typeof runT2Compute>[0]);
@@ -68,7 +96,12 @@ describe('runT2Compute', () => {
   });
 
   it('emits a reproducibility snapshot with full input, result, and content hashes', () => {
-    const out = runT2Compute({ period, bookNetIncome: 195000, activeBusinessIncome: 195000, taxableCapital: 2000000 });
+    const out = runT2Compute({
+      period,
+      bookNetIncome: 195000,
+      activeBusinessIncome: 195000,
+      taxableCapital: 2000000,
+    });
     expect(out.snapshot.engineBuild).toBe(T2_ENGINE_VERSION);
     expect(out.snapshot.inputHash).toMatch(/^[0-9a-f]{64}$/);
     expect(out.snapshot.resultHash).toMatch(/^[0-9a-f]{64}$/);
@@ -79,15 +112,32 @@ describe('runT2Compute', () => {
   });
 
   it('a stored snapshot recomputes byte-for-byte (verifyT2Reproducible)', () => {
-    const out = runT2Compute({ period, bookNetIncome: 195000, activeBusinessIncome: 195000, taxableCapital: 2000000 });
+    const out = runT2Compute({
+      period,
+      bookNetIncome: 195000,
+      activeBusinessIncome: 195000,
+      taxableCapital: 2000000,
+    });
     const check = verifyT2Reproducible(out.snapshot);
     expect(check.reproducible).toBe(true);
     expect(check.actual).toBe(check.expected);
   });
 
   it('gates the SBD on CCPC status — a non-CCPC pays more tax', () => {
-    const ccpc = runT2Compute({ period, bookNetIncome: 300000, activeBusinessIncome: 300000, taxableCapital: 2000000, isCcpc: true } as Parameters<typeof runT2Compute>[0]);
-    const nonCcpc = runT2Compute({ period, bookNetIncome: 300000, activeBusinessIncome: 300000, taxableCapital: 2000000, isCcpc: false } as Parameters<typeof runT2Compute>[0]);
+    const ccpc = runT2Compute({
+      period,
+      bookNetIncome: 300000,
+      activeBusinessIncome: 300000,
+      taxableCapital: 2000000,
+      isCcpc: true,
+    } as Parameters<typeof runT2Compute>[0]);
+    const nonCcpc = runT2Compute({
+      period,
+      bookNetIncome: 300000,
+      activeBusinessIncome: 300000,
+      taxableCapital: 2000000,
+      isCcpc: false,
+    } as Parameters<typeof runT2Compute>[0]);
     expect(nonCcpc.obligation.totalOwing).toBeGreaterThan(ccpc.obligation.totalOwing);
   });
 });
@@ -145,7 +195,10 @@ describe('Schedule 1 is assembled by CRA line number', () => {
 
     // A preparer who keyed 104 directly wins — the figure is not added twice.
     const manual = assembleT2Input(
-      { incomeStatement: { revenue: 500000, amortization: 40000 }, netIncome: { lines: { '104': 37000 } } },
+      {
+        incomeStatement: { revenue: 500000, amortization: 40000 },
+        netIncome: { lines: { '104': 37000 } },
+      },
       eng,
     ) as { schedule1Additions: { line: string; amount: number }[] };
     const l104 = manual.schedule1Additions.filter((a) => a.line === '104');

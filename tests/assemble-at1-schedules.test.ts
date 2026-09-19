@@ -995,7 +995,7 @@ describe('Schedule 21 — limited partnership loss continuity (lines 131-141)', 
   });
 });
 
-describe('Schedule 21 — RIFE continuity feeds Schedule 12 lines 130/131 (not its own wire fields)', () => {
+describe('Schedule 21 — the RIFE continuity is filed, and also feeds Schedule 12 lines 130/131', () => {
   it('files 012130 from the RIFE deducted figure, with federal (012131) at 0', () => {
     const riWithRife = {
       ...riWithDivergence,
@@ -1015,11 +1015,25 @@ describe('Schedule 21 — RIFE continuity feeds Schedule 12 lines 130/131 (not i
     // 310 = 100,000; 340 = 25,000; 350 = lesser = 25,000; no override ⇒ deducted = 25,000.
     expect(byId.get('012130001')).toBe(25_000);
     expect(byId.get('012131001')).toBe(0);
-    // Schedule 21 itself never carries a 021200-250/310-350 line — confirmed
-    // absent from the NetFile schema (schedule21-rife.ts's own doc comment).
+    /*
+     * Schedule 21 ALSO carries the continuity itself.
+     *
+     * This used to assert the opposite — that no 021200-250/310-350 line is
+     * ever filed — on the strength of `schedule21-rife.ts`'s doc comment, which
+     * said no such field existed anywhere in the spec. True of specification
+     * 2025.2; not true of 2026.4, which defines the rows and marks 240, 250,
+     * 310, 320, 330 and 350 MANDATORY. The belief outlived the spec revision
+     * because nothing could check it; `at1-spec-coverage.test.ts` in ca-tax is
+     * what checks it now.
+     */
     const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
-    const ids21 = (sch21?.values ?? []).map((v) => v.lineItemId);
-    expect(ids21.some((id) => id.startsWith('021200') || id.startsWith('021250'))).toBe(false);
+    const byId21 = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+    expect(byId21.get('021200001'), 'opening balance of RIFE').toBe(100_000);
+    expect(byId21.get('021310001'), 'RIFE from previous tax years').toBe(100_000);
+    expect(byId21.get('021340001'), 'excess + received capacity').toBe(25_000);
+    expect(byId21.get('021350001'), 'deductible — lesser of 310 and 340').toBe(25_000);
+    // The same figure Schedule 12 line 130 carries: one number, two places.
+    expect(byId21.get('021240001')).toBe(byId.get('012130001'));
   });
 
   describe('lines 230/320/330 default from federal Schedule 130 rather than asking twice', () => {

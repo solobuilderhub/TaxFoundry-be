@@ -207,6 +207,41 @@ const ALBERTA_SCENARIOS: CorpusScenario[] = [
   },
   {
     program: 'AT1',
+    id: 'AB8-associated-passive-income',
+    /*
+     * The shape that hid a real grind bug for the life of the engine.
+     *
+     * Area B's passive-income reduction is `(lesser of a or b) / 100,000 ×
+     * (AAII − $50,000)` — SCALED BY THE BASE AMOUNT. The engine stored that
+     * expression pre-evaluated at a $500,000 base ($5 per $1) and applied it
+     * flat, so it was exactly right on every full-base return and wrong on
+     * every other one. Nothing in this corpus had another one: every AT1
+     * scenario here is an unassociated corporation taking the whole limit for
+     * a full year.
+     *
+     * $200,000 allocated base, $80,000 AAII:
+     *   correct  (200,000/100,000) × 30,000 = 60,000 → limit 140,000
+     *   was      5 × 30,000          = 150,000 → limit  50,000
+     */
+    title: 'AT1 for an associated CCPC with passive income — Area B grinds by its own base',
+    taxYear: TAX_YEAR,
+    fed: { ...FED_PLAIN, bookNetIncome: 400_000, activeBusinessIncome: 400_000 },
+    returnInput: {
+      alberta: { reportsDifferentAlbertaIncome: 'no', electsDifferentDiscretionaryAmounts: 'no' },
+      albertaSbd: { corporationStatus: 'ccpc', wasCcpcThroughoutYear: 'yes' },
+      // Association, the allocated limit and AAII come off the FEDERAL slice —
+      // `albertaSbdFacts` reads `ri.sbd` for all three, deliberately, so that
+      // one fact is not held as two numbers free to disagree.
+      sbd: {
+        associated: [{ name: 'Sister Holdings Ltd.', allocatedLimit: 300_000 }],
+        businessLimit: 200_000,
+        aaii: 80_000,
+      },
+    },
+    isCcpc: true,
+  },
+  {
+    program: 'AT1',
     id: 'AB5-non-ccpc',
     title: 'AT1 for a non-CCPC — no Alberta small-business deduction',
     taxYear: TAX_YEAR,

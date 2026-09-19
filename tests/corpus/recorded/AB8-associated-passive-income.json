@@ -1,0 +1,33 @@
+{
+  "scenario": "AB8-associated-passive-income",
+  "title": "AT1 for an associated CCPC with passive income — Area B grinds by its own base",
+  "program": "AT1",
+  "lines": {
+    "001:001003001": 400000,
+    "001:001007001": 400000,
+    "001:001009001": 400000,
+    "001:001013001": 400000,
+    "001:001015001": 56000,
+    "001:001021001": "1.000000",
+    "field:albertaSbdIncome": 140000,
+    "field:albertaSmallBusinessDeduction": 8400,
+    "field:albertaTaxPayable": 23600,
+    "field:albertaTaxableIncome": 400000,
+    "field:allocationFactor": 1,
+    "field:basicAlbertaTax": 32000,
+    "field:innovationEmploymentGrant": 0,
+    "field:sbdAreaB.aaiiOverThreshold": 30000,
+    "field:sbdAreaB.baseAmount": 80000,
+    "field:sbdAreaB.daysInTaxYear": 366,
+    "field:sbdAreaB.largeCorporationVariant": 3,
+    "field:sbdAreaB.reducedBusinessLimit": 56000,
+    "field:sbdAreaB.reductionApplied": 24000,
+    "field:sbdAreaB.reductionPassiveIncome": 24000,
+    "field:sbdAreaB.reductionTaxableCapital": 0,
+    "field:sbdAreaB.taxableCapital": 0,
+    "field:sbdAreaB.taxableCapitalFactor": 0,
+    "field:sbdAreaB.thresholdForReduction": 80000,
+    "field:totalOwing": 2360000,
+    "issue:0": "Alberta SBD: the base amount is reduced by 60000 — the greater of the taxable-capital reduction (0) and the passive-income reduction (60000), per AT1 Schedule 1 Area B."
+  }
+}

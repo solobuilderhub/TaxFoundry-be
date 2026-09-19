@@ -273,6 +273,18 @@ function scheduleEighteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
   const result = computeAlbertaSchedule18({
     federalCategories,
     ...(abilEntries.length > 0 ? { abilEntries } : {}),
+    /*
+     * 018001 — the ACTA 14.1/14.2/16.1 transfer election. Mandatory, and it
+     * was absent from every filed Schedule 18.
+     *
+     * Only a "yes" is forwarded. §3.2.3.19 defaults the line to 2 (No)
+     * itself, so an unanswered election and an explicit No file the same
+     * thing, and the engine does that — this does not need to distinguish
+     * them, only to carry a Yes when there is one.
+     */
+    ...(ri.albertaSchedule18?.electingPropertyTransfer === 'yes'
+      ? { electingPropertyTransfer: true }
+      : {}),
     ...divergenceFlags(ab),
   });
   return result.formPermitted ? result : undefined;
@@ -347,7 +359,21 @@ export function albertaSbdFacts(fed: Fed, ri: Ri) {
  * income that attracts the small-business rate; it does not itself change
  * what tax is payable.
  */
-function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusinessLimit: number) {
+function scheduleOne(
+  fed: Fed,
+  ri: Ri,
+  albertaTaxableIncome: number,
+  defaultBusinessLimit: number,
+  /**
+   * Line 021 — the same factor the jacket files at 000065001.
+   *
+   * Passed in rather than recomputed, because §3.2.3.2 states 021's rule as a
+   * RELATIONSHIP to that jacket line ("Value cannot be less than 000065"), so
+   * the two have to be one number. A second derivation here could round
+   * differently and fail TRA's own comparison.
+   */
+  allocationFactor: number,
+) {
   const ab: AlbertaSbdValues = ri.albertaSbd ?? {};
   const facts = albertaSbdFacts(fed, ri);
   if (!facts) return undefined;
@@ -383,6 +409,7 @@ function scheduleOne(fed: Fed, ri: Ri, albertaTaxableIncome: number, defaultBusi
       ri.albertaSchedule12,
     ).albertaAbi,
     albertaTaxableIncome,
+    allocationFactor,
     ...(ab.royaltyTaxDeduction != null ? { royaltyTaxDeduction: num(ab.royaltyTaxDeduction) } : {}),
     ...(agreementMembers.length > 0 ? { agreementMembers } : {}),
   };
@@ -1804,6 +1831,7 @@ export function assembleAt1Schedules(
     ri,
     Math.max(0, Math.round(albertaTaxableIncome * allocationFactor)),
     defaultBusinessLimit,
+    allocationFactor,
   );
 
   // Area B items the preparer entered directly (`ri.albertaSchedule12`) —
