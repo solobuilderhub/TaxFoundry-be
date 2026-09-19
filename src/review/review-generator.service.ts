@@ -669,11 +669,27 @@ export function at1SilentNilFlags(
    * is unambiguously wrong: a figure entered and silently discarded is worse
    * than one the software declines to accept.
    */
-  const cca13 = (ri.albertaCca13 ?? {}) as { classes?: unknown[] };
-  const albertaCcaRows = Array.isArray(cca13.classes) ? cca13.classes.length : 0;
-  const federalCcaRows = Array.isArray((ri.cca as { classes?: unknown[] } | undefined)?.classes)
-    ? ((ri.cca as { classes?: unknown[] }).classes as unknown[]).length
-    : 0;
+  /*
+   * Counted by rows that carry SOMETHING, not by rows that exist.
+   *
+   * The first version counted `classes.length`, so a federal CCA schedule
+   * holding blank rows — an editor grid opened and left empty, which is
+   * ordinary — read as a basis and suppressed the flag. Exactly the return
+   * that needs telling: Alberta overrides entered, federal side untouched, and
+   * nothing said.
+   */
+  const carriesData = (row: unknown): boolean =>
+    !!row &&
+    typeof row === 'object' &&
+    Object.values(row as Record<string, unknown>).some(
+      (v) => v != null && v !== '' && !(typeof v === 'number' && Number.isNaN(v)),
+    );
+  const rowsWithData = (v: unknown): number =>
+    Array.isArray((v as { classes?: unknown[] } | undefined)?.classes)
+      ? ((v as { classes: unknown[] }).classes.filter(carriesData).length ?? 0)
+      : 0;
+  const albertaCcaRows = rowsWithData(ri.albertaCca13);
+  const federalCcaRows = rowsWithData(ri.cca);
   if (albertaCcaRows > 0 && federalCcaRows === 0) {
     flags.push({
       severity: 'amber',

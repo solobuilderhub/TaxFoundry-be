@@ -244,3 +244,38 @@ describe('Alberta CCA overrides with no federal basis', () => {
     );
   });
 });
+
+describe('the CCA flag counts rows that carry data, not rows that exist', () => {
+  /*
+   * Reported as "not shipped" after a deploy that contained it. It was
+   * shipped — and suppressed: the count was `classes.length`, so a federal
+   * CCA schedule holding BLANK rows (a grid opened and left empty, which is
+   * ordinary) read as a basis and silenced the flag on exactly the return
+   * that needed it.
+   */
+  it('still fires when the federal rows are present but empty', () => {
+    expect(
+      codes('AT1', {
+        ...withIncome,
+        cca: { classes: [{}, { ccaClass: '' }] },
+        albertaCca13: { classes: [{ ccaClass: '8', openingUCC: 100_000 }] },
+      }),
+    ).toContain('AT1_CCA_NO_FEDERAL_BASIS');
+  });
+
+  it('stays quiet once a federal row carries a figure', () => {
+    expect(
+      codes('AT1', {
+        ...withIncome,
+        cca: { classes: [{ ccaClass: '8', openingUCC: 50_000 }] },
+        albertaCca13: { classes: [{ ccaClass: '8', claim: 10_000 }] },
+      }),
+    ).not.toContain('AT1_CCA_NO_FEDERAL_BASIS');
+  });
+
+  it('does not fire on blank Alberta rows either — nothing is being dropped', () => {
+    expect(codes('AT1', { ...withIncome, albertaCca13: { classes: [{}, {}] } })).not.toContain(
+      'AT1_CCA_NO_FEDERAL_BASIS',
+    );
+  });
+});

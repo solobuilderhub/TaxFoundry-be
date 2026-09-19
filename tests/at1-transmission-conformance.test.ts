@@ -1264,3 +1264,56 @@ describe('Area A and donations accept Alberta-side figures', () => {
     expect(() => transmit(maximalReturn)).not.toThrow();
   });
 });
+
+/**
+ * The Alberta base amount is ground down, end to end.
+ *
+ * Neither Area B reduction was applied: the base amount took the full
+ * $500,000 however large the corporation was, so a CCPC with passive income or
+ * a big balance sheet claimed a deduction Alberta does not give it. SBD
+ * overstated, Alberta tax understated. The federal side grinds correctly,
+ * which is why this only ever showed up provincially.
+ *
+ * Asserted through the real chain, because the engine can only grind with
+ * figures the composer hands it — and the composer passed neither.
+ */
+describe('the Alberta small business deduction is ground down', () => {
+  const withSbd = (sbd: Record<string, unknown>): Record<string, unknown> => ({
+    ...maximalReturn,
+    sbd: { ...(maximalReturn.sbd as Record<string, unknown>), ...sbd },
+  });
+  const deduction = (input: Record<string, unknown>) =>
+    Number(
+      compute(input).fields.find((f) => f.line === 'albertaSmallBusinessDeduction')?.value ?? 0,
+    );
+
+  it('reduces the deduction for passive income over $50,000', () => {
+    expect(deduction(withSbd({ aaii: 100_000 }))).toBeLessThan(deduction(withSbd({ aaii: 0 })));
+  });
+
+  it('reduces it for taxable capital over $10M', () => {
+    expect(deduction(withSbd({ taxableCapital: 30_000_000 }))).toBeLessThan(
+      deduction(withSbd({ taxableCapital: 0 })),
+    );
+  });
+
+  it('eliminates it entirely at $50M of taxable capital', () => {
+    expect(deduction(withSbd({ taxableCapital: 50_000_000 }))).toBe(0);
+  });
+
+  it('raises Alberta tax by exactly what the deduction loses', () => {
+    // 068 is struck before the deduction and 080 after, so a smaller deduction
+    // is more tax — the whole reason this matters.
+    const clean = compute(withSbd({ aaii: 0 }));
+    const ground = compute(withSbd({ aaii: 100_000 }));
+    const tax = (c: Computed) =>
+      Number(c.fields.find((f) => f.line === 'albertaTaxPayable')?.value ?? 0);
+    expect(tax(ground)).toBeGreaterThan(tax(clean));
+  });
+
+  it('leaves an ordinary small corporation untouched', () => {
+    expect(deduction(withSbd({ aaii: 40_000, taxableCapital: 5_000_000 }))).toBe(
+      deduction(withSbd({})),
+    );
+  });
+});

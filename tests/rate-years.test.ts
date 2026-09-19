@@ -49,6 +49,22 @@ describe('registerRateYears', () => {
       GENERAL_RATE: 0.08,
       SMALL_BUSINESS_RATE: 0.02,
       BUSINESS_LIMIT: 500_000,
+      /*
+       * AT1 Schedule 1 Area B's two limit reductions. Added to the book rather
+       * than hard-coded so a year that changes them can, and asserted here
+       * because this test's whole job is to notice a rate moving.
+       *
+       * The values come out identical to the federal ones, which the FORM does
+       * not make obvious: it writes the taxable-capital reduction as
+       * `A × B / $90,000` with B = `(taxable capital − $10M) × 0.225%`, and at
+       * $50M that is exactly the divisor — the same $10M→$50M straight line.
+       * The passive-income one is `(limit) / 100,000 × (AAII − $50,000)`,
+       * which on a $500,000 limit is $5 per $1.
+       */
+      TC_GRIND_LOWER: 10_000_000,
+      TC_GRIND_UPPER: 50_000_000,
+      AAII_THRESHOLD: 50_000,
+      AAII_REDUCTION_PER_DOLLAR: 5,
     });
   });
 

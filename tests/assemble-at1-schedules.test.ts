@@ -111,35 +111,65 @@ describe('assembleProvincialInput(AT1) — schedules actually reach the engine i
     expect(engineInput.schedules?.donations?.gifts?.currentYearGifts).toBe(25_000);
   });
 
-  it('caps the TWO donation pools against ONE shared 75%-of-income ceiling, not one each', () => {
-    // Alberta net income for tax purposes is large enough that the two pools'
-    // own available balances are the binding constraint individually, but
-    // NOT large enough for both to claim their full balance simultaneously —
-    // this is the case that would silently over-claim if each pool were
-    // capped against the full ceiling independently instead of sequentially.
+  it('caps the charitable claim by the 75% ceiling, and the gift claim by its own pool', () => {
+    /*
+     * This test asserted the opposite — that both pools shared ONE ceiling,
+     * sequenced charitable-first — and the code did that faithfully. The form
+     * does not. AT1 Schedule 20 says which claim the maximum governs, line by
+     * line:
+     *
+     *   016 "Amount applied against taxable income — Not exceeding the lesser
+     *        of: total donations available (line 014) and maximum deduction
+     *        calculation (line 048)"
+     *   076 "Deduct: Amount applied against taxable income"
+     *
+     * 048 is Area B's 75%-of-income figure and only 016 refers to it. The gift
+     * claim names no ceiling, no percentage and no income at all.
+     *
+     * The shared reading cost the entire gift claim on any return whose
+     * charitable donations had already used the 75% — the ordinary shape of a
+     * donations return. Income 32,000 with charitable 30,000 and gifts 20,000
+     * applied nothing at all against the gifts.
+     */
     const riWithBothPools = {
       ...riWithDivergence,
-      albertaDonations: {
-        giftsCurrentYear: 90_000,
-      },
+      albertaDonations: { giftsCurrentYear: 20_000 },
     };
-    const fedSmallIncome = { ...fed, bookNetIncome: 20_000, activeBusinessIncome: 20_000 };
+    const fedSmallIncome = { ...fed, bookNetIncome: 32_000, activeBusinessIncome: 32_000 };
     const engineInput = assembleProvincialInput('AT1', fedSmallIncome, riWithBothPools, {
       isCcpc: true,
     }) as {
       schedules?: {
         donations?: {
           charitable?: { amountApplied: number };
-          gifts?: { amountApplied: number };
+          gifts?: { amountApplied: number; availableBeforeClaim: number };
           maximum?: { maximumDeduction: number };
         };
       };
     };
     const donations = engineInput.schedules?.donations;
     expect(donations?.maximum).toBeDefined();
-    const combined =
-      (donations?.charitable?.amountApplied ?? 0) + (donations?.gifts?.amountApplied ?? 0);
-    expect(combined).toBeLessThanOrEqual(donations!.maximum!.maximumDeduction);
+
+    // Charitable is still held to the maximum deduction.
+    expect(donations?.charitable?.amountApplied ?? 0).toBeLessThanOrEqual(
+      donations!.maximum!.maximumDeduction,
+    );
+
+    // Gifts claim their pool regardless of what charitable consumed — the
+    // behaviour that was missing, and the reason deductions were understated.
+    expect(donations?.gifts?.amountApplied).toBe(donations?.gifts?.availableBeforeClaim);
+
+    // The gift claim is NOT reduced by what charitable consumed. Asserted as
+    // the relationship rather than as a total, because whether the combined
+    // figure exceeds the ceiling depends on how big this fixture's charitable
+    // pool happens to be — and that is not the property under test.
+    const ceilingLeftAfterCharitable = Math.max(
+      0,
+      donations!.maximum!.maximumDeduction - (donations?.charitable?.amountApplied ?? 0),
+    );
+    expect(donations?.gifts?.amountApplied ?? 0).toBeGreaterThanOrEqual(
+      Math.min(donations?.gifts?.availableBeforeClaim ?? 0, ceilingLeftAfterCharitable),
+    );
   });
 
   it('lines 090-100 — carries no yearOfOrigin when none was entered (the renderer gates filing the block on it)', () => {
@@ -1261,7 +1291,6 @@ describe('AT1 S13 reads its own slice, paired by class number', () => {
     );
   });
 });
-
 
 /**
  * The Alberta figures come from `ri.albertaReserves17` and default from federal

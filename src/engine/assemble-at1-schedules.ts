@@ -323,6 +323,19 @@ export function albertaSbdFacts(fed: Fed, ri: Ri) {
     ...(isAssociated && sbd.businessLimit != null
       ? { allocatedBusinessLimit: num(sbd.businessLimit) }
       : {}),
+    /*
+     * The two Area B reductions. Neither figure was passed, so the Alberta
+     * base amount took the full $500,000 however large the corporation was —
+     * SBD overstated, Alberta tax understated, on any CCPC with passive income
+     * or a big balance sheet.
+     *
+     * Both come off the FEDERAL slice deliberately. The AT1 form asks for AAII
+     * "from line 417 of the T2" and measures taxable capital on the same group
+     * the federal test uses, so a second Alberta-side copy would be two
+     * numbers for one fact, free to disagree.
+     */
+    ...(present(sbd.taxableCapital) ? { taxableCapital: num(sbd.taxableCapital) } : {}),
+    ...(present(sbd.aaii) ? { aaii: num(sbd.aaii) } : {}),
   };
 }
 
@@ -886,7 +899,29 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
       })
     : undefined;
 
-  const remainingCeiling = Math.max(0, maximum.maximumDeduction - (charitable?.amountApplied ?? 0));
+  /*
+   * The gifts pool does NOT share the charitable ceiling.
+   *
+   * This used to hand gifts whatever the charitable claim left of the 75%,
+   * sequencing the two pools against one limit. The form does not work that
+   * way, and says so line by line:
+   *
+   *   016 "Amount applied against taxable income — Not exceeding the lesser
+   *        of: total donations available (line 014) and maximum deduction
+   *        calculation (line 048)"
+   *   076 "Deduct: Amount applied against taxable income"
+   *
+   * 048 is Area B's 75%-of-income figure, and only 016 refers to it. The gift
+   * claim at 076 names no ceiling, no percentage and no income — its only
+   * limit is the pool at 074.
+   *
+   * The cost of the old reading was the whole gift claim on any return whose
+   * charitable donations had already used the 75%, which is the ordinary
+   * shape of a donations return: on the reported case — income 32,000,
+   * charitable 30,000, gifts 20,000 — the charitable claim took all 24,000 of
+   * ceiling and gifts applied nothing, understating deductions by $20,000 and
+   * overstating taxable income by the same.
+   */
 
   // 090-100 — carryforward available by year of origin, ONE ROW PER YEAR.
   // Each row is filed as its own occurrence and only when that row carries a
@@ -923,7 +958,7 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
         transferredIn: num(d.giftsTransferredIn),
         acquisitionOfControlAdjustment: num(d.giftsAcquisitionOfControlAdjustment),
         ...(present(d.giftsApplied) ? { amountApplied: num(d.giftsApplied) } : {}),
-        incomeLimit: remainingCeiling,
+        subjectToMaximumDeduction: false,
         /*
          * The charitable default applies to the FIRST row only — it is the
          * charitable pool's own closing balance, one figure, and the pool has
