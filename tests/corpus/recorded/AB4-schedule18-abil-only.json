@@ -5,8 +5,8 @@
   "lines": {
     "001:001003001": 300000,
     "001:001007001": 300000,
-    "001:001009001": 300000,
-    "001:001013001": 300000,
+    "001:001009001": 255250,
+    "001:001013001": 255250,
     "012:012002001": 300000,
     "012:012040001": -44750,
     "012:012041001": 0,
@@ -25,7 +25,7 @@
     "012:012071001": 0,
     "012:012072001": 0,
     "012:012073001": 0,
-    "012:012090001": 300000,
+    "012:012090001": 255250,
     "012:012091001": 300000,
     "012:012100001": 2,
     "018:018002001": 0,
@@ -120,13 +120,13 @@
     "021:021165001": 0,
     "021:021167001": 0,
     "021:021169001": 0,
-    "field:albertaSbdIncome": 300000,
-    "field:albertaSmallBusinessDeduction": 18000,
-    "field:albertaTaxPayable": 6000,
-    "field:albertaTaxableIncome": 300000,
+    "field:albertaSbdIncome": 255250,
+    "field:albertaSmallBusinessDeduction": 15315,
+    "field:albertaTaxPayable": 5105,
+    "field:albertaTaxableIncome": 255250,
     "field:allocationFactor": 1,
-    "field:basicAlbertaTax": 24000,
+    "field:basicAlbertaTax": 20420,
     "field:innovationEmploymentGrant": 0,
-    "field:totalOwing": 600000
+    "field:totalOwing": 510500
   }
 }

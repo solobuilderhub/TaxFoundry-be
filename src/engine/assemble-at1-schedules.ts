@@ -60,6 +60,7 @@ import {
   type Schedule12FilingInput,
   type Schedule12Result,
   schedule12LossDeductions,
+  schedule12Values,
 } from '@classytic/ca-tax/t2';
 import type { ComposedFederalInput } from './assemble-t2-input.js';
 import { assembleSchedule3 } from './at1-schedule-composers/schedule-3-compose.js';
@@ -1182,11 +1183,31 @@ function scheduleTwelve(
   culturalEcologicalGiftsFederal: number,
   // Area A, lines 022/023, 026-033 — AT1 Schedule 15 vs federal Schedule 12.
   resourceDeductions: ReturnType<typeof assembleSchedule15> | undefined,
-  // Area B, lines 090/091 — the taxable income this return was actually
-  // computed on. Passed rather than left to the builder's own sum of the
-  // deduction lines: that sum is only as complete as the Division C items this
-  // engine models, and 090 feeds AT1 page 2 line 062.
-  albertaTaxableIncome: number,
+  /**
+   * Area B, line 090 — an OVERRIDE, and only when the preparer stated one.
+   *
+   * 090 is a computed line: "Lines 054 − 080 + 082", carried to AT1 page 2
+   * line 062. It used to be passed unconditionally, from the engine's
+   * `allocationFactor × federalTaxableIncome`, on the reasoning that the
+   * builder's own sum is only as complete as the Division C items modelled.
+   * Two things were wrong with that:
+   *
+   *   - the figure passed was the ALLOCATED one (line 066), and 090 feeds
+   *     062, which is taxable income BEFORE allocation;
+   *   - it is derived from the FEDERAL taxable income, so every deduction
+   *     Area B carries that federal does not — the Alberta donations claim
+   *     and the Alberta loss application, chiefly — was invisible to it. A
+   *     return could show $24,000 of deductions against $12,000 of income on
+   *     the schedule's own rows and still file 090 as a positive number, and
+   *     pay tax on it.
+   *
+   * A schedule whose total contradicts its rows is not defensible, whatever
+   * the total is derived from. So the formula wins by default and this
+   * carries only what the preparer typed into the Alberta taxable income box
+   * — which `AT1_TAXABLE_INCOME_ENTERED` already reports in review, because a
+   * figure that bypasses the engine has to be visible as such.
+   */
+  albertaTaxableIncome: number | undefined,
   // Area B, the items the form asks the preparer to copy off the federal T2.
   areaB: Ri['albertaSchedule12'],
   // Lines 100-106 — the federal ABI the Alberta reconciliation starts from.
@@ -1418,7 +1439,16 @@ function scheduleTwelve(
     // supplied anything for it, Alberta defaulting to the federal figure unless
     // overridden.
     ...areaBPairs(areaB),
-    taxableIncome: { alberta: albertaTaxableIncome, federal: federal.taxableIncome },
+    // 090 and 091 are overridden together or not at all. They share Area B's
+    // rows — 090 sums the Alberta column, 091 the federal — so overriding one
+    // and deriving the other would corrupt the single thing this schedule
+    // exists to disclose: the DIFFERENCE between them. If Area B is missing a
+    // deduction the return really took, both totals are short by it and the
+    // divergence still reads true; state one side only and the divergence
+    // becomes an artefact of which side was stated.
+    ...(albertaTaxableIncome != null
+      ? { taxableIncome: { alberta: albertaTaxableIncome, federal: federal.taxableIncome } }
+      : {}),
     // 012100-012106. Mandatory line 100 with the specification's own default,
     // and the three lines it gates when the answer is "Yes".
     albertaActiveBusinessIncome: albertaActiveBusinessIncome(federalActiveBusinessIncome, areaB)
@@ -1646,24 +1676,33 @@ function assembleIeg(ri: Ri): AlbertaReturnInput['ieg'] {
  * computed inside `assembleProvincialInput` (previously discarded beyond
  * `.taxableIncome`); `fed` is the federal engine INPUT (for raw echoes like
  * `ccaClasses`); `ri` is the structured working return (for the AT1-only
- * slices nothing else can supply); `albertaTaxableIncome` /
- * `defaultBusinessLimit` come from the caller, which already has the
- * allocation factor and resolved Alberta rates in scope.
+ * slices nothing else can supply); `enteredTaxableIncome` /
+ * `defaultBusinessLimit` / `allocationFactor` come from the caller, which
+ * already has the allocation factor and resolved Alberta rates in scope.
+ *
+ * Returns `albertaTaxableIncome` as well as the schedules: line 062 as
+ * Schedule 12 line 090 actually files it, BEFORE allocation. The caller
+ * forwards it to the engine so the tax computed and the schedule transmitted
+ * are one figure — they were two, and the schedule's was the correct one.
  */
 export function assembleAt1Schedules(
   federal: FederalT2Result,
   fed: Fed,
   ri: Ri,
-  albertaTaxableIncome: number,
+  enteredTaxableIncome: number | undefined,
   defaultBusinessLimit: number,
-): { schedules: AlbertaReturnInput['schedules']; ieg: AlbertaReturnInput['ieg'] } {
+  allocationFactor: number,
+): {
+  schedules: AlbertaReturnInput['schedules'];
+  ieg: AlbertaReturnInput['ieg'];
+  albertaTaxableIncome: number;
+} {
   const ab = ri.alberta ?? {};
 
   const cca = scheduleThirteen(fed, ab, ri);
   const reserves = scheduleSeventeen(fed, ri, ab);
   const dispositions = scheduleEighteen(fed, ab, ri);
   const lossCarryback = scheduleTen(federal, ri);
-  const smallBusinessDeduction = scheduleOne(fed, ri, albertaTaxableIncome, defaultBusinessLimit);
 
   // Nine standalone Alberta-only credit/deduction schedules — none are
   // reconciliation overlays like 13/17/18, so none read `ab`'s divergence
@@ -1693,7 +1732,7 @@ export function assembleAt1Schedules(
     undefined,
     0,
     resourceDeductions,
-    albertaTaxableIncome,
+    enteredTaxableIncome,
     ri.albertaSchedule12,
     num(fed.activeBusinessIncome),
     schedule12SredPair(scientificResearch),
@@ -1727,10 +1766,44 @@ export function assembleAt1Schedules(
     donations,
     fed.culturalEcologicalGifts ?? 0,
     resourceDeductions,
-    albertaTaxableIncome,
+    enteredTaxableIncome,
     ri.albertaSchedule12,
     num(fed.activeBusinessIncome),
     schedule12SredPair(scientificResearch),
+  );
+
+  /*
+   * Line 062, read back off the wire.
+   *
+   * `schedule12Values` is the same builder the payload is rendered from, so
+   * line 090 here is byte-for-byte the figure TRA will receive — not a second
+   * derivation that could disagree with it, which is the whole failure this
+   * is fixing. The fallback is the federal taxable income, for the returns
+   * that file no Schedule 12 at all and therefore have no 090.
+   *
+   * 090 can be NEGATIVE, and must be allowed to be: a corporation whose
+   * Alberta deductions exceed its Alberta income has a loss, and clamping it
+   * to zero here would file a taxable income the schedule contradicts. The
+   * engine floors at line 066 instead (`Math.max(0, …)`), where nil tax is
+   * the right consequence.
+   */
+  const filedTaxableIncome = schedule12Values(reconciliation).values.find(
+    (v) => v.lineItemId.slice(3, 6) === '090',
+  )?.value;
+  const albertaTaxableIncome =
+    typeof filedTaxableIncome === 'number' ? filedTaxableIncome : federal.taxableIncome;
+
+  // Schedule 1 caps the small business deduction by the income actually
+  // taxable in Alberta — line 066, so the allocation factor applies. Computed
+  // HERE rather than at the top of this function, because until Schedule 12
+  // has reconciled there is no Alberta taxable income to cap against; it used
+  // to run first, against the federal figure, and a return with Alberta-only
+  // deductions capped its SBD by income it did not have.
+  const smallBusinessDeduction = scheduleOne(
+    fed,
+    ri,
+    Math.max(0, Math.round(albertaTaxableIncome * allocationFactor)),
+    defaultBusinessLimit,
   );
 
   // Area B items the preparer entered directly (`ri.albertaSchedule12`) —
@@ -1801,5 +1874,5 @@ export function assembleAt1Schedules(
     ...(losses ? { losses } : {}),
   };
 
-  return { schedules, ieg: assembleIeg(ri) };
+  return { schedules, ieg: assembleIeg(ri), albertaTaxableIncome };
 }

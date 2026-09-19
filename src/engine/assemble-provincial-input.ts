@@ -108,25 +108,10 @@ export function assembleProvincialInput(
      */
     const enteredTaxableIncome = (ri.alberta as { albertaTaxableIncome?: number } | undefined)
       ?.albertaTaxableIncome;
-    // Line 062 — taxable income BEFORE allocation, entered or derived.
-    const taxableIncomeBeforeAllocation =
+    const statedTaxableIncome =
       enteredTaxableIncome != null && Number.isFinite(Number(enteredTaxableIncome))
         ? Math.round(Number(enteredTaxableIncome))
-        : federalTaxableIncome;
-    /*
-     * Line 066 — the income actually taxable in Alberta, and the figure the
-     * SCHEDULES work from: Schedule 1 caps the small business deduction by it,
-     * and Schedule 12 reconciles against it.
-     *
-     * Kept distinct from 062 because they are different lines. They used to be
-     * one number here and in the engine, and the allocated one was filed at
-     * 062 — understating taxable income on every return with a permanent
-     * establishment outside Alberta.
-     */
-    const albertaTaxableIncome = Math.max(
-      0,
-      Math.round(allocationFactor * taxableIncomeBeforeAllocation),
-    );
+        : undefined;
 
     // `period.end` is already a real `Date` by this point — `at1Engine.validate`
     // (downstream) throws otherwise, so every engine input reaching here already
@@ -134,12 +119,30 @@ export function assembleProvincialInput(
     const taxYear: number = period?.end?.getFullYear() ?? new Date().getFullYear();
     const rates = resolveAlbertaTaxRates(taxYear, AB_TAX_RATE_BOOK);
 
-    const { schedules, ieg } = assembleAt1Schedules(
+    /*
+     * Line 062 — taxable income BEFORE allocation.
+     *
+     * Not computed here any more. It is Schedule 12 line 090 ("Taxable income
+     * for Alberta purposes or (loss)", "Carried to AT1 page 2, line 062"), so
+     * the composer resolves it from the schedule it actually files and hands
+     * it back. It used to be `federalTaxableIncome` (or the preparer's entry)
+     * and was ALSO pushed onto 090 as an override, which meant Area B's own
+     * deductions — the Alberta donations claim, the Alberta loss application
+     * — changed neither the filed 090 nor the tax. A return could deduct
+     * $24,000 against $12,000 of income and still be taxed on $8,000.
+     *
+     * Kept distinct from 066 because they are different lines: the engine
+     * applies the allocation factor itself, and it floors the result at nil
+     * there — so a negative 062 (a real Alberta loss) transmits as the loss
+     * it is, and simply produces no tax.
+     */
+    const { schedules, ieg, albertaTaxableIncome } = assembleAt1Schedules(
       federal,
       fed,
       ri,
-      albertaTaxableIncome,
+      statedTaxableIncome,
       rates.BUSINESS_LIMIT,
+      allocationFactor,
     );
 
     // The SAME eligibility facts Schedule 1 is filed from. Without them the
@@ -203,9 +206,11 @@ export function assembleProvincialInput(
       // on the first attempt at this.
       // The engine's own 062 input is the PRE-allocation figure; it applies the
       // factor itself at 066. Passing the allocated one would double-allocate.
-      ...(enteredTaxableIncome != null && Number.isFinite(Number(enteredTaxableIncome))
-        ? { albertaTaxableIncome: taxableIncomeBeforeAllocation }
-        : {}),
+      // Always forwarded now, not only when the preparer stated one: the
+      // schedule's 090 is the return's taxable income whether it came from the
+      // box or from Area B's arithmetic, and the engine deriving its own from
+      // `federalTaxableIncome` is exactly how the two came to disagree.
+      albertaTaxableIncome,
       ...(sbdFacts ?? {}),
       ...(allocation ? { allocation } : {}),
       ...(num(ab.manufacturingDeduction) > 0
