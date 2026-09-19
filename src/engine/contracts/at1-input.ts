@@ -275,6 +275,18 @@ export const AlbertaDonationCarryforwardRow = z
 
 export const AlbertaDonationsValues = z
   .object({
+    charitableCurrentYear: z
+      .number()
+      .optional()
+      .describe(
+        'AT1 Schedule 20 — charitable donations made in the year, on the ALBERTA side. Blank = ' +
+          'the federal figure, which is the normal path and stays the default. Supply it when the ' +
+          'T2 was prepared in another package, or when Alberta genuinely claims a different ' +
+          'amount. ' +
+          'The gifts continuity beside it has had `giftsCurrentYear` all along; charitable had no ' +
+          'equivalent, so the one figure a donations schedule is mostly ABOUT was the one figure ' +
+          'that could not be stated. An asymmetry with no reason behind it.',
+      ),
     charitableExpired: z
       .number()
       .optional()
@@ -1302,6 +1314,19 @@ export const AlbertaSchedule18Values = z
  */
 export const AlbertaSchedule12Values = z
   .object({
+    federalNetIncomeForTax: z
+      .number()
+      .optional()
+      .describe(
+        'AT1 Schedule 12 line 002 — net income (loss) for FEDERAL purposes, the figure Area A ' +
+          'reconciles from. Blank = the net income this app computed, which is the normal path ' +
+          'and stays the default. ' +
+          'Supply it when the T2 was prepared in another package: Area A works by adding and ' +
+          'deducting Alberta differences from the federal figure, so with nothing to start from ' +
+          'the whole reconciliation reads nil — and line 090, the Alberta taxable income that ' +
+          'feeds jacket line 062, with it. Alberta net income at 054 is still DERIVED from this ' +
+          'plus the Area A differences; it is not a second thing to type.',
+      ),
     taxableDividendsDeductible: z
       .number()
       .optional()

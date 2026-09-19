@@ -825,7 +825,20 @@ function scheduleTwentyOne(
 function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
   const d = ri.albertaDonations ?? {};
 
-  const charitableCurrentYear = num(fed.charitableDonations);
+  /*
+   * Charitable donations made in the year — stated on the Alberta side, or
+   * defaulted from federal.
+   *
+   * The gifts continuity below has honoured `giftsCurrentYear` all along;
+   * charitable took the federal figure unconditionally, so the one amount a
+   * donations schedule is mostly ABOUT was the one amount a preparer could not
+   * state. An asymmetry with no reason behind it, and the one that bites when
+   * the T2 was prepared in another package: there is then no federal figure to
+   * default from and the current-year row reads nil.
+   */
+  const charitableCurrentYear = present(d.charitableCurrentYear)
+    ? num(d.charitableCurrentYear)
+    : num(fed.charitableDonations);
   const charitableOpening = num(fed.openingDonationPool);
   // `fed.charitableDonations` is CHARITABLE ONLY and `fed.culturalEcologicalGifts`
   // is the combined cultural + ecological total — two separate fields since
@@ -1202,7 +1215,17 @@ function scheduleTwelve(
       : []),
   ];
 
-  const result = reconcileAlbertaNetIncome(federal.netIncomeForTax, adjustments);
+  /*
+   * Line 002 — stated or computed. Resolved ONCE, here, because both the
+   * reconciliation and the filed payload read it: setting it only on the
+   * payload files a 002 the schedule did not actually reconcile from, and 054
+   * then contradicts it.
+   */
+  const federalNetIncomeForTax = present(areaB?.federalNetIncomeForTax)
+    ? num(areaB?.federalNetIncomeForTax)
+    : federal.netIncomeForTax;
+
+  const result = reconcileAlbertaNetIncome(federalNetIncomeForTax, adjustments);
 
   const lossDeductions = {
     ...schedule12LossDeductions(
@@ -1266,7 +1289,21 @@ function scheduleTwelve(
     : undefined;
 
   const filingInput = {
-    federalNetIncomeForTax: federal.netIncomeForTax,
+    /*
+     * Line 002 — the federal net income Area A reconciles FROM, stated or
+     * computed.
+     *
+     * Area A works by adding and deducting Alberta differences from the
+     * federal figure, so a return whose T2 was prepared in another package had
+     * nothing to start from: the whole reconciliation read nil, and line 090
+     * — the Alberta taxable income that feeds jacket 062 — with it.
+     *
+     * Only 002 is stateable. Alberta net income at 054 stays DERIVED from it
+     * plus the Area A differences, because that derivation is the schedule's
+     * entire job; offering both would let a preparer state two figures that
+     * disagree and leave the form unable to say which is right.
+     */
+    federalNetIncomeForTax,
     albertaNetIncomeForTax: result.albertaNetIncomeForTax,
     ...(dispositionsOther ? { other: dispositionsOther } : {}),
     ...(cca

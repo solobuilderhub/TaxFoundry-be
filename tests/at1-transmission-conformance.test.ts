@@ -1182,3 +1182,85 @@ describe('Schedule 12 is filed when SR&ED is the only divergence', () => {
     expect(lineOf(xml, '000062001')).toBe(100_000);
   });
 });
+
+/**
+ * Area A and the donations continuity can be stated on the Alberta side.
+ *
+ * Both were federal-derived with no override, which is right whenever the T2
+ * is prepared here and useless when it is not:
+ *
+ *  - Area A reconciles BY adding and deducting Alberta differences from the
+ *    federal net income at line 002. With nothing to start from the whole
+ *    reconciliation reads nil — and line 090, the Alberta taxable income that
+ *    feeds jacket 062, with it.
+ *  - Schedule 20's gifts continuity has honoured `giftsCurrentYear` all along
+ *    while charitable took the federal figure unconditionally. The one amount
+ *    a donations schedule is mostly ABOUT was the one amount a preparer could
+ *    not state.
+ *
+ * Only line 002 is stateable, not 054. Alberta net income stays derived from
+ * 002 plus the Area A differences, because that derivation is the schedule's
+ * job; offering both would let a preparer state two figures that disagree.
+ */
+describe('Area A and donations accept Alberta-side figures', () => {
+  const noFederalReturn: Record<string, unknown> = {
+    identification: { corpType: 'ccpc', province: 'AB' },
+    alberta: {
+      grossRevenue: 800_000,
+      totalAssets: 400_000,
+      associatedWithCcpcs: 'no',
+      windUpOfSubsidiary: 'no',
+      firstYearAfterAmalgamation: 'no',
+      taxYearEndChanged: 'no',
+      finalReturn: 'no',
+      transferOfProperty: 'no',
+      reportsDifferentAlbertaIncome: 'no',
+      electsDifferentDiscretionaryAmounts: 'yes',
+      preparedByTaxPreparerForFee: 'no',
+    },
+    albertaSbd: { corporationStatus: 'ccpc' },
+  };
+  const lineOf = (xml: string, id: string) =>
+    Number(xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1]);
+
+  it('reconciles from a stated federal net income', () => {
+    const xml = transmit({
+      ...noFederalReturn,
+      albertaSchedule12: { federalNetIncomeForTax: 500_000 },
+    });
+    expect(lineOf(xml, '012002001')).toBe(500_000);
+  });
+
+  it('derives Alberta net income from it rather than asking twice', () => {
+    const xml = transmit({
+      ...noFederalReturn,
+      albertaSchedule12: { federalNetIncomeForTax: 500_000 },
+    });
+    // No Area A differences stated, so 054 equals 002 — derived, not entered.
+    expect(lineOf(xml, '012054001')).toBe(500_000);
+  });
+
+  it('still computes from the federal return when nothing is stated', () => {
+    expect(
+      (maximalReturn.albertaSchedule12 as Record<string, unknown>).federalNetIncomeForTax,
+    ).toBeUndefined();
+    expect(lineOf(transmit(maximalReturn), '012002001')).toBeGreaterThan(0);
+  });
+
+  it('accepts a stated charitable current-year donation', () => {
+    const xml = transmit({
+      ...noFederalReturn,
+      albertaSchedule12: { federalNetIncomeForTax: 500_000 },
+      albertaDonations: { charitableCurrentYear: 12_000 },
+    });
+    // Schedule 20 is filed, and the figure reached it.
+    expect((transmitted(xml).get('020') ?? new Set()).size).toBeGreaterThan(0);
+  });
+
+  it('leaves the federal charitable figure as the default', () => {
+    expect(
+      (maximalReturn.albertaDonations as Record<string, unknown>).charitableCurrentYear,
+    ).toBeUndefined();
+    expect(() => transmit(maximalReturn)).not.toThrow();
+  });
+});
