@@ -84,3 +84,38 @@ export function assembleSchedule16(ri: ReturnInput): AlbertaSchedule16Result | u
     ...(present(s.amountClaimed) ? { amountClaimed: num(s.amountClaimed) } : {}),
   });
 }
+
+/**
+ * AT1 Schedule 12 lines 034/035 — which Schedule 16 figure Alberta reports.
+ *
+ * §3.2.3.13 states it exactly, and it is not simply "the claim":
+ *
+ *   "If form 016 exists and if 016016 is negative, then value = 016016.
+ *    Otherwise, value = 016020."
+ *
+ * That distinction is the point of the line. Schedule 16's line 016 is a
+ * SUBTOTAL that can go negative — a pool exhausted past zero is an income
+ * INCLUSION rather than a deduction — and in that case the inclusion is what
+ * Schedule 12 reconciles, not the nil claim at 020. Reporting the claim in
+ * both cases files nothing on precisely the returns that have something to
+ * report.
+ *
+ * Nothing carried this at all: Schedule 16 was computed and filed as its own
+ * form, and never reached Schedule 12, which had no input for it either. A
+ * bench run found it on a negative-pool return — 016 computed −30,000 and
+ * Schedule 12 line 034 stayed empty.
+ *
+ * ── The federal side ────────────────────────────────────────────────────────
+ *
+ * The printed form sources 035 from federal Schedule 1 lines 411 and 231,
+ * neither of which this engine models, so the only federal figure available is
+ * the one the preparer states on Schedule 16 itself. Absent that, the two
+ * sides are taken as equal and Area A's omission rule drops the pair — which
+ * is right: a divergence nobody can measure is not a divergence to report.
+ */
+export function schedule12SredPair(
+  result: AlbertaSchedule16Result | undefined,
+): { alberta: number } | undefined {
+  if (!result) return undefined;
+  return { alberta: result.subtotal < 0 ? result.subtotal : result.amountClaimed };
+}

@@ -1064,3 +1064,62 @@ describe('a short Alberta taxation year prorates the base amount', () => {
     expect(stub(new Date('2024-06-30'))).not.toBe(stub(new Date('2024-03-31')));
   });
 });
+
+/**
+ * AT1 Schedule 12 line 034 — the SR&ED figure carried from Schedule 16.
+ *
+ * The pair was described by the form model and accepted by nothing: the
+ * payload builder had no input for it, and the server computed Schedule 16,
+ * filed it as its own form, and never passed it to Schedule 12. So 034 could
+ * not be filed however the return was prepared.
+ *
+ * A bench run found it on a negative-pool case: Schedule 16 computed 016 =
+ * −30,000 and Schedule 12 line 034 rendered "—", while its sibling 035 showed
+ * 0 — which is what made it look like a display bug rather than a missing
+ * wire.
+ *
+ * §3.2.3.13 states the rule, and the negative case is the whole point of it:
+ *
+ *   "If form 016 exists and if 016016 is negative, then value = 016016.
+ *    Otherwise, value = 016020."
+ *
+ * Line 016 is a SUBTOTAL that can go negative — a pool exhausted past zero is
+ * an income INCLUSION, not a deduction — and then the inclusion is what
+ * Schedule 12 reconciles, not the nil claim at 020.
+ */
+describe('AT1 Schedule 12 carries the SR&ED figure from Schedule 16', () => {
+  const withSred = (sred: Record<string, unknown>): Record<string, unknown> => ({
+    ...maximalReturn,
+    albertaSred16: sred,
+  });
+  const sch12 = (input: Record<string, unknown>) =>
+    transmitted(transmit(input)).get('012') ?? new Set<string>();
+  const valueAt = (xml: string, id: string) =>
+    Number(xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1]);
+
+  it('files 034 when a Schedule 16 was prepared', () => {
+    expect(
+      sch12(
+        withSred({
+          currentYearExpenditures: 120_000,
+          openingPoolBalance: 30_000,
+          amountClaimed: 40_000,
+        }),
+      ).has('034'),
+    ).toBe(true);
+  });
+
+  it('carries a negative pool as a negative — the case that was empty', () => {
+    // Deductions exceeding the pool drive line 016 below zero.
+    const xml = transmit(
+      withSred({ currentYearExpenditures: 0, assistance: 30_000, openingPoolBalance: 0 }),
+    );
+    expect(valueAt(xml, '012034001')).toBeLessThan(0);
+  });
+
+  it('files nothing at 034 when no Schedule 16 exists', () => {
+    // `maximalReturn` carries one, so strip it for this case.
+    const { albertaSred16: _omitted, ...withoutSred } = maximalReturn;
+    expect(sch12(withoutSred).has('034')).toBe(false);
+  });
+});

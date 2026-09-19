@@ -65,7 +65,10 @@ import type { ComposedFederalInput } from './assemble-t2-input.js';
 import { assembleSchedule3 } from './at1-schedule-composers/schedule-3-compose.js';
 import { assembleSchedule4 } from './at1-schedule-composers/schedule-4-compose.js';
 import { assembleSchedule15 } from './at1-schedule-composers/schedule-15-compose.js';
-import { assembleSchedule16 } from './at1-schedule-composers/schedule-16-compose.js';
+import {
+  assembleSchedule16,
+  schedule12SredPair,
+} from './at1-schedule-composers/schedule-16-compose.js';
 import type {
   AlbertaAssociatedCorpMember,
   AlbertaCca13Row,
@@ -1140,6 +1143,16 @@ function scheduleTwelve(
   areaB: Ri['albertaSchedule12'],
   // Lines 100-106 — the federal ABI the Alberta reconciliation starts from.
   federalActiveBusinessIncome: number,
+  /**
+   * Lines 034/035 — the SR&ED figures Schedule 16 carries over, already
+   * resolved by `schedule12SredPair` (which owns the rule about WHICH
+   * Schedule 16 line Alberta reports).
+   *
+   * `undefined` when no Schedule 16 was prepared, which is most returns: the
+   * form is required only where the Alberta pool or claim diverges from
+   * federal.
+   */
+  scientificResearch: { alberta: number; federal?: number } | undefined,
 ): {
   result: Schedule12Result;
   filingInput: Schedule12FilingInput;
@@ -1269,6 +1282,13 @@ function scheduleTwelve(
           },
         }
       : {}),
+    /*
+     * Lines 034/035 — the Schedule 16 figure, already resolved by
+     * `schedule12SredPair`. Spread rather than set unconditionally so a return
+     * with no Schedule 16 files neither line, which is 034's own condition
+     * ("if form 016 exists").
+     */
+    ...(scientificResearch ? { scientificResearch } : {}),
     ...(reserves
       ? {
           reservesDeductedPriorYear: {
@@ -1604,6 +1624,7 @@ export function assembleAt1Schedules(
     albertaTaxableIncome,
     ri.albertaSchedule12,
     num(fed.activeBusinessIncome),
+    schedule12SredPair(scientificResearch),
   );
 
   const losses = scheduleTwentyOne(
@@ -1637,6 +1658,7 @@ export function assembleAt1Schedules(
     albertaTaxableIncome,
     ri.albertaSchedule12,
     num(fed.activeBusinessIncome),
+    schedule12SredPair(scientificResearch),
   );
 
   // Area B items the preparer entered directly (`ri.albertaSchedule12`) —
