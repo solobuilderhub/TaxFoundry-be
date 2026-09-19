@@ -1123,3 +1123,62 @@ describe('AT1 Schedule 12 carries the SR&ED figure from Schedule 16', () => {
     expect(sch12(withoutSred).has('034')).toBe(false);
   });
 });
+
+/**
+ * A return whose ONLY Alberta divergence is SR&ED still files Schedule 12.
+ *
+ * Schedule 12 is filed when anything it reconciles exists, and
+ * `scientificResearch` was missing from that list. The omission was invisible
+ * on every ordinary return — CCA, reserves, dispositions, losses or donations
+ * each pull the schedule in — and total on the one case that has none of them:
+ * Schedule 16 filed on its own, and the entire reconciliation went missing,
+ * including line 090, the Alberta taxable income that feeds jacket line 062.
+ *
+ * That is what the bench was really seeing. It reported line 034 rendering "—"
+ * and noted in passing that 090 did too "although the engine holds $100,000".
+ * Both are the same cause: there was no Schedule 12 on the return at all.
+ *
+ * The fourth appearance of one shape in this composer — a schedule omitted
+ * although Alberta-side data for it exists. The IEG did it on an empty group,
+ * Schedule 18 on an uncategorized disposition, Schedule 13 on an empty federal
+ * CCA.
+ */
+describe('Schedule 12 is filed when SR&ED is the only divergence', () => {
+  const sredOnly: Record<string, unknown> = {
+    identification: { corpType: 'ccpc', province: 'AB' },
+    incomeStatement: { revenue: 100_000 },
+    alberta: {
+      grossRevenue: 100_000,
+      totalAssets: 50_000,
+      associatedWithCcpcs: 'no',
+      windUpOfSubsidiary: 'no',
+      firstYearAfterAmalgamation: 'no',
+      taxYearEndChanged: 'no',
+      finalReturn: 'no',
+      transferOfProperty: 'no',
+      reportsDifferentAlbertaIncome: 'no',
+      electsDifferentDiscretionaryAmounts: 'yes',
+      preparedByTaxPreparerForFee: 'no',
+    },
+    albertaSbd: { corporationStatus: 'ccpc' },
+    // Deductions with no pool drive Schedule 16 line 016 negative.
+    albertaSred16: { currentYearExpenditures: 0, assistance: 30_000 },
+  };
+  const lineOf = (xml: string, id: string) =>
+    Number(xml.match(new RegExp(`<Value LineItemID="${id}">([^<]*)</Value>`))?.[1]);
+
+  it('files the schedule at all', () => {
+    expect((transmitted(transmit(sredOnly)).get('012') ?? new Set()).size).toBeGreaterThan(0);
+  });
+
+  it('carries the negative pool to 034', () => {
+    expect(lineOf(transmit(sredOnly), '012034001')).toBe(-30_000);
+  });
+
+  it('files 090, the taxable income that feeds jacket 062', () => {
+    const xml = transmit(sredOnly);
+    expect(lineOf(xml, '012090001')).toBe(100_000);
+    // And the jacket agrees — 090 is carried to 062.
+    expect(lineOf(xml, '000062001')).toBe(100_000);
+  });
+});

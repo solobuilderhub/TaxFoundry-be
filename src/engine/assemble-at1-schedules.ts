@@ -1695,12 +1695,28 @@ export function assembleAt1Schedules(
     // from. Caught by driving a real AT1 return through Compute and
     // checking the actual persisted `schedulePayloads`, not by a unit test
     // that only calls the builder function directly.
+    /*
+     * Schedule 12 is filed when anything it reconciles exists.
+     *
+     * `scientificResearch` was missing from this list, and the omission was
+     * invisible because it only bites on a return whose ONLY Alberta
+     * divergence is SR&ED: Schedule 16 filed on its own, and the whole
+     * reconciliation — line 034 carrying the pool, and line 090, the Alberta
+     * taxable income that feeds jacket line 062 — was simply absent.
+     *
+     * The fourth appearance of one shape in this file: a schedule omitted
+     * although Alberta-side data for it exists. The Innovation Employment
+     * Grant did it on an empty group, Schedule 18 on an uncategorized
+     * disposition, Schedule 13 on an empty federal CCA. Each time the figure
+     * was entered, computed, and then dropped on the way to the wire.
+     */
     ...(cca ||
     reserves ||
     dispositions ||
     losses ||
     donations ||
     resourceDeductions ||
+    scientificResearch ||
     hasAreaBInput
       ? { reconciliation }
       : {}),
