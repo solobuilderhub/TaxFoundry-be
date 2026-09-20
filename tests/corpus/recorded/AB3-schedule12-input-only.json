@@ -91,6 +91,7 @@
     "field:albertaTaxPayable": 5500,
     "field:albertaTaxableIncome": 275000,
     "field:allocationFactor": 1,
+    "field:amountTaxableInAlberta": 275000,
     "field:basicAlbertaTax": 22000,
     "field:innovationEmploymentGrant": 0,
     "field:sbdAreaB.aaiiOverThreshold": 0,

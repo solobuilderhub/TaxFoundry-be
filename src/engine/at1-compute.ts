@@ -77,9 +77,33 @@ export function runAT1Compute(input: unknown, actor = 'engine'): EngineComputeOu
 
   const fields: ProvenancedField[] = [
     { line: 'allocationFactor', value: b.allocationFactor, provenance: 'engine' },
+    /*
+     * AT1 line 062 — taxable income on an Alberta basis, BEFORE allocation.
+     * `line-labels.ts` used to caption this "Alberta taxable income" with no
+     * qualifier, so on any return with an allocation factor under 100% the
+     * summary's single most load-bearing figure read as the wrong number —
+     * a preparer at a 60% factor saw $200,000 labelled "Alberta taxable
+     * income" when only $120,000 of it was actually taxed in Alberta
+     * (TF_DEV_BUG_LIST_2026-09-18.md, BUG-108). Kept under the same `line`
+     * key for backward compatibility with anything already reading it;
+     * `amountTaxableInAlberta` below is the new field, not a replacement.
+     */
     {
       line: 'albertaTaxableIncome',
       value: b.albertaTax.albertaTaxableIncome,
+      provenance: 'engine',
+    },
+    /*
+     * AT1 line 066 — `062 × 065`, the income actually taxable in Alberta and
+     * the base every rate applies to. This was computed and used internally
+     * (`computeAlbertaTax`'s own doc comment: "Printed on the form, never
+     * transmitted") but never surfaced as its own summary field, so the
+     * allocated figure had nowhere honest to be labelled — BUG-108 again,
+     * the other half of it.
+     */
+    {
+      line: 'amountTaxableInAlberta',
+      value: b.albertaTax.amountTaxableInAlberta,
       provenance: 'engine',
     },
     { line: 'albertaSbdIncome', value: b.albertaTax.albertaSbdIncome, provenance: 'engine' },
