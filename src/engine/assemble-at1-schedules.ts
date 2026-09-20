@@ -630,6 +630,8 @@ function scheduleTwentyOne(
       applied?: unknown;
       expired?: unknown;
       windUpTransfer?: unknown;
+      /** Net-capital only (AT1 line 059) — see `loss-continuity.ts`'s own doc comment. Ignored for every other pool by `computeLossContinuity` itself (no line to derive it from). */
+      abilExpired?: unknown;
       section80Adjustment?: unknown;
       otherAdjustments?: unknown;
     },
@@ -643,6 +645,7 @@ function scheduleTwentyOne(
         : fed.appliedCurrentYear,
       expired: present(poolInput?.expired) ? num(poolInput?.expired) : fed.expired,
       windUpTransfer: num(poolInput?.windUpTransfer),
+      abilExpired: num(poolInput?.abilExpired),
       section80Adjustment: num(poolInput?.section80Adjustment),
       otherAdjustments: num(poolInput?.otherAdjustments),
     });
@@ -668,8 +671,18 @@ function scheduleTwentyOne(
     undefined,
     {
       applied: c.capitalApplied,
-      expired: c.capitalExpired,
+      // NOT `expired` — AT1_SCHEDULE_21_POOLS' own capital entry has no
+      // `expired` line at all (net-capital losses do not expire under the
+      // ITA; that concept applies only to non-capital/farm/restricted-farm).
+      // `c.capitalExpired` used to be read here and silently fed into
+      // `computeLossContinuity`'s generic `expired` term — the ONE field the
+      // capital-pool section of the guided editor offered that had no basis
+      // on the real form, and using it corrupted the closing balance (069)
+      // with a deduction the form has no line for. `abilExpired` (059) is
+      // the real capital-only line, an ADDITION rather than a deduction —
+      // see `loss-continuity.ts`'s doc comment.
       windUpTransfer: c.capitalWindUpTransfer,
+      abilExpired: c.capitalAbilExpired,
       section80Adjustment: c.capitalSection80Adjustment,
       otherAdjustments: c.capitalOtherAdjustments,
     },

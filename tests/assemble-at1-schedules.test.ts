@@ -959,6 +959,39 @@ describe('Schedule 21 — Alberta-specific overrides for applied/expired/wind-up
     const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
     expect(byId.get('021041001')).toBe(0);
   });
+
+  /*
+   * Net-capital's own field, `capitalAbilExpired` — line 059, an Allowable
+   * Business Investment Loss that expired unused. NOT the same shape as the
+   * other four pools' "expired" field: 059 is an ADDITION to the pool, and
+   * §3.2.3.21 states the FILED figure as the raw Alberta amount × 4/3.
+   *
+   * `capitalExpired` used to exist here instead, mirroring the other three
+   * pools' shared "Expired this year" field — but net-capital losses have no
+   * expiry concept on the real form at all, and that field was silently read
+   * into the generic deduction, corrupting the closing balance (069) with a
+   * term the form has no line for. This end-to-end path is the replacement.
+   */
+  it('capitalAbilExpired ADDS to the net-capital pool at 4/3 of the entered figure', () => {
+    const riWithAbil = {
+      ...riWithDivergence,
+      albertaContinuity: { ...riWithDivergence.albertaContinuity, capitalAbilExpired: 9_000 },
+    };
+    const engineInput = assembleProvincialInput('AT1', fed, riWithAbil, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const byId = new Map((sch21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+    // 9,000 × 4/3 = 12,000 exactly.
+    expect(byId.get('021059001')).toBe(12_000);
+  });
+
+  it('has no "expired" concept for net-capital at all — nothing files at 021052 or leaks the ABIL onto it', () => {
+    const engineInput = assembleProvincialInput('AT1', fed, riWithDivergence, { isCcpc: true });
+    const out = runAT1Compute(engineInput);
+    const sch21 = out.schedulePayloads?.find((s) => s.scheduleId === '021');
+    const ids = (sch21?.values ?? []).map((v) => v.lineItemId);
+    expect(ids.some((id) => id.startsWith('021052'))).toBe(false);
+  });
 });
 
 describe('Schedule 21 — limited partnership loss continuity (lines 131-141)', () => {

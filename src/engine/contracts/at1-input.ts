@@ -617,8 +617,22 @@ export const AlbertaContinuityValues = z
     nonCapitalSection80Adjustment: z.number().optional(),
     nonCapitalOtherAdjustments: z.number().optional(),
     capitalApplied: z.number().optional(),
-    capitalExpired: z.number().optional(),
     capitalWindUpTransfer: z.number().optional(),
+    /**
+     * AT1 021059 — "Allowable business investment loss expired as reported
+     * on Federal Schedule 4 line 220". Net-capital's own ADDITION (an
+     * expired ABIL becomes an ordinary net capital loss rather than simply
+     * vanishing), not a deduction — see `loss-continuity.ts`'s doc comment
+     * in ca-tax.
+     *
+     * Was `capitalExpired`, mirroring the other three pools' "Expired this
+     * year" field. The net-capital pool has no such line on the real form —
+     * net-capital losses do not expire under the ITA — so that field had no
+     * basis at all and, worse, was silently read into the generic `expired`
+     * deduction every other pool uses, corrupting the capital pool's closing
+     * balance with a term the form has no line for.
+     */
+    capitalAbilExpired: z.number().optional(),
     capitalSection80Adjustment: z.number().optional(),
     capitalOtherAdjustments: z.number().optional(),
     farmApplied: z.number().optional(),
