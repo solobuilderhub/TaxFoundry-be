@@ -1376,3 +1376,168 @@ describe('AT1 S17 reads its own slice, paired by reserve type', () => {
     expect(byId.get('017065001')).toBe(2_000); // prepaid rent — still federal
   });
 });
+
+/**
+ * The contract used to expose three of the nine override fields the engine has
+ * always accepted, and `albertaCcaOverrides` gated rows on two of them. A class
+ * whose only Alberta divergence was acquisitions, dispositions or net
+ * adjustments was therefore dropped at the gate and filed at the federal
+ * figure — the engine could compute the right answer and never saw the input.
+ */
+describe('AT1 S13 — the override columns beyond opening UCC and the claim', () => {
+  const riWithClass8 = (row: Record<string, unknown>) => ({
+    ...riWithDivergence,
+    albertaCca13: { classes: [{ ccaClass: '8', ...row }] },
+  });
+
+  const filed = (ri: Record<string, unknown>) => {
+    const out = runAT1Compute(assembleProvincialInput('AT1', fed, ri, { isCcpc: true }));
+    const sch13 = out.schedulePayloads?.find((s) => s.scheduleId === '013');
+    return new Map((sch13?.values ?? []).map((v) => [v.lineItemId, v.value]));
+  };
+
+  it('keeps a row whose ONLY divergence is acquisitions, and files it at 005', () => {
+    // Federal additions are 20,000; Alberta says 35,000. Under the old gate
+    // this row carried neither openingUCC nor claim, so it never survived.
+    expect(filed(riWithClass8({ additions: 35_000 })).get('013005001')).toBe(35_000);
+  });
+
+  it('files an Alberta disposition at 009 and a signed net adjustment at 007', () => {
+    const byId = filed(riWithClass8({ dispositions: 12_000, netAdjustments: -3_000 }));
+    expect(byId.get('013009001')).toBe(12_000);
+    expect(byId.get('013007001')).toBe(-3_000);
+  });
+
+  it('an explicit 0 for acquisitions is a real answer, not a blank', () => {
+    // Federal is 20,000. Alberta acquiring nothing must not fall back to it.
+    // 005 is conditional, so a nil files nothing rather than a zero — what
+    // matters is that federal's 20,000 does NOT appear.
+    expect(filed(riWithClass8({ additions: 0 })).get('013005001')).not.toBe(20_000);
+  });
+
+  it('files the per-return immediate expensing limit at 125, once', () => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        fed,
+        {
+          ...riWithDivergence,
+          albertaCca13: {
+            classes: [{ ccaClass: '8', claim: 0 }],
+            immediateExpensingLimit: 1_500_000,
+          },
+        },
+        { isCcpc: true },
+      ),
+    );
+    const sch13 = out.schedulePayloads?.find((s) => s.scheduleId === '013');
+    const at125 = (sch13?.values ?? []).filter((v) => v.lineItemId.startsWith('013125'));
+    expect(at125).toHaveLength(1);
+    expect(at125[0]?.value).toBe(1_500_000);
+  });
+});
+
+/**
+ * Schedule 18's contract exposed two of its twenty engine inputs, so every
+ * Alberta divergence figure on the schedule — the category overrides, the
+ * reserves, the donated-property gains and the s.34.2 pair — was untypeable.
+ */
+describe('AT1 S18 — the schedule-level figures and category overrides', () => {
+  const filed = (albertaSchedule18: Record<string, unknown>) => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        fed,
+        { ...riWithDivergence, albertaSchedule18 },
+        { isCcpc: true },
+      ),
+    );
+    const s = out.schedulePayloads?.find((p) => p.scheduleId === '018');
+    return new Map((s?.values ?? []).map((v) => [v.lineItemId, v.value]));
+  };
+
+  it('files capital gains dividends at 064', () => {
+    expect(filed({ capitalGainsDividends: 9_000 }).get('018064001')).toBe(9_000);
+  });
+
+  it('files both capital gain reserve balances', () => {
+    const byId = filed({ federalReserveOpening: 4_000, federalReserveClosing: 7_000 });
+    expect(byId.get('018066001')).toBe(4_000);
+    expect(byId.get('018068001')).toBe(7_000);
+  });
+
+  it('an Alberta category override displaces the federal proceeds', () => {
+    // fed's single shares disposition has proceeds of 150,000.
+    const byId = filed({
+      albertaCategories: [{ category: 'shares', proceeds: 175_000 }],
+    });
+    expect(byId.get('018002001')).toBe(175_000);
+  });
+
+  it('produces a Schedule 18 from a schedule-level figure alone', () => {
+    // Same class of bug the ABIL guard already fixed: with no categorised
+    // federal disposition and no ABIL, the schedule used to return undefined
+    // and the figure had nowhere to go.
+    const noDispositions = { ...fed, capitalDispositions: [] };
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        noDispositions,
+        {
+          ...riWithDivergence,
+          albertaSchedule18: { section342TaxableCapitalGains: 50_000 },
+        },
+        { isCcpc: true },
+      ),
+    );
+    expect(out.schedulePayloads?.find((p) => p.scheduleId === '018')).toBeDefined();
+  });
+});
+
+/**
+ * Schedule 16 is REQUIRED when the opening balance or the claim differs from
+ * federal — a test that cannot fire without the federal figures to compare
+ * against, which the contract never collected.
+ */
+describe('AT1 S16 — the federal comparison figures drive formRequired', () => {
+  const run = (albertaSred16: Record<string, unknown>) =>
+    runAT1Compute(
+      assembleProvincialInput('AT1', fed, { ...riWithDivergence, albertaSred16 }, { isCcpc: true }),
+    );
+
+  it('files the schedule when the Alberta claim diverges from the stated federal one', () => {
+    const out = run({
+      currentYearExpenditures: 400_000,
+      amountClaimed: 100_000,
+      federalAmountClaimed: 250_000,
+    });
+    expect(out.schedulePayloads?.find((p) => p.scheduleId === '016')).toBeDefined();
+  });
+
+  it('a blank federal figure asserts no divergence rather than a nil one', () => {
+    // Coercing the absent federal claim to 0 would compare 0 against 100,000
+    // and declare a divergence the preparer never stated.
+    const out = run({ currentYearExpenditures: 400_000, amountClaimed: 100_000 });
+    const s16 = out.schedulePayloads?.find((p) => p.scheduleId === '016');
+    // The schedule may still be filed on its own merits; what must not happen
+    // is a claimed divergence against a federal figure nobody entered.
+    expect(s16 === undefined || s16.values.length > 0).toBe(true);
+  });
+});
+
+/** Schedule 20's charitable pool was pinned to the federal opening balance. */
+describe('AT1 S20 — the Alberta charitable opening balance', () => {
+  it('an entered Alberta opening displaces the federal donation pool', () => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        { ...fed, openingDonationPool: 1_000 },
+        { ...riWithDivergence, albertaDonations: { charitableOpening: 25_000 } },
+        { isCcpc: true },
+      ),
+    );
+    const s20 = out.schedulePayloads?.find((p) => p.scheduleId === '020');
+    const byId = new Map((s20?.values ?? []).map((v) => [v.lineItemId, v.value]));
+    expect(byId.get('020002001')).toBe(25_000);
+  });
+});

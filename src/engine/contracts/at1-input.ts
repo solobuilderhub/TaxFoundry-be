@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { YesNo } from './common.js';
-import { ReserveType } from './t2-input.js';
+import { At1DispositionCategory, ReserveType } from './t2-input.js';
 
 /**
  * Alberta AT1 jacket — the mandatory fields the federal schedules do not
@@ -286,6 +286,16 @@ export const AlbertaDonationsValues = z
           'The gifts continuity beside it has had `giftsCurrentYear` all along; charitable had no ' +
           'equivalent, so the one figure a donations schedule is mostly ABOUT was the one figure ' +
           'that could not be stated. An asymmetry with no reason behind it.',
+      ),
+    charitableOpening: z
+      .number()
+      .optional()
+      .describe(
+        '020002 — charitable pool opening balance on the ALBERTA side. Blank = the federal ' +
+          'opening donation pool, which stays the default. The gifts pool beside it has had ' +
+          '`giftsOpening` all along; charitable was pinned to the federal figure with no way to ' +
+          'state an Alberta balance that had diverged — the same asymmetry ' +
+          '`charitableCurrentYear` was added to close, one row up.',
       ),
     charitableExpired: z
       .number()
@@ -1286,6 +1296,32 @@ export const AlbertaAbilEntry = z
   })
   .meta({ id: 'AlbertaAbilEntry' });
 
+/**
+ * One category's Alberta totals, entered ONLY where they differ from the
+ * federal figure the same category already carries.
+ *
+ * `outlays` is deliberately absent: the schedule states that outlays and
+ * expenses (018042-018052) always equal the federal figure, so an Alberta
+ * override box for it would invite a divergence the form does not recognise.
+ */
+export const AlbertaDispositionCategoryRow = z
+  .object({
+    category: At1DispositionCategory.optional().describe(
+      'Which of the six categories this row overrides. Pairs to the federal total by category, not by position.',
+    ),
+    proceeds: z
+      .number()
+      .optional()
+      .describe('018002-018012 — Alberta total proceeds of disposition. Blank = federal.'),
+    acb: z
+      .number()
+      .optional()
+      .describe(
+        '018022-018032 — Alberta total adjusted cost base. SIGNED: a negative ACB is possible. Blank = federal.',
+      ),
+  })
+  .meta({ id: 'AlbertaDispositionCategoryRow' });
+
 export const AlbertaSchedule18Values = z
   .object({
     abilEntries: z
@@ -1293,6 +1329,68 @@ export const AlbertaSchedule18Values = z
       .optional()
       .describe(
         'One row per small business corporation disposed of at a loss. 018094 (the allowable business investment loss, at the inclusion rate) is computed from these — not entered directly.',
+      ),
+    albertaCategories: z
+      .array(AlbertaDispositionCategoryRow)
+      .optional()
+      .describe(
+        'Alberta category totals, entered only where they differ from federal. A category with no row here files the federal figure.',
+      ),
+    unappliedLppLosses: z
+      .number()
+      .optional()
+      .describe(
+        '018060 — unapplied listed-personal-property losses from other years. The schedule caps this at the LPP gain, so an over-large figure cannot shelter ordinary gains.',
+      ),
+    capitalGainsDividends: z
+      .number()
+      .optional()
+      .describe('018064 — capital gains dividends (federal 006875).'),
+    federalReserveOpening: z
+      .number()
+      .optional()
+      .describe('018066 — FEDERAL capital gain reserve opening balance (federal 006880).'),
+    federalReserveClosing: z
+      .number()
+      .optional()
+      .describe('018068 — FEDERAL capital gain reserve closing balance (federal 006885).'),
+    albertaReserveOpening: z
+      .number()
+      .optional()
+      .describe('018066 — Alberta reserve opening balance, entered only when it differs.'),
+    albertaReserveClosing: z
+      .number()
+      .optional()
+      .describe('018068 — Alberta reserve closing balance, entered only when it differs.'),
+    gainOnDonatedSecurities: z
+      .number()
+      .optional()
+      .describe('018071 — gain on the donation of listed securities (federal 006895).'),
+    gainOnDonatedEcologicalLand: z
+      .number()
+      .optional()
+      .describe('018073 — gain on the donation of ecologically sensitive land (federal 006896).'),
+    exemptionThreshold: z
+      .number()
+      .optional()
+      .describe('018077 — exemption threshold at the time of disposal (federal 006897).'),
+    capitalGainsFromActualProperty: z
+      .number()
+      .optional()
+      .describe(
+        '018078 — total capital gains from the disposition of actual property (federal 006898).',
+      ),
+    section342TaxableCapitalGains: z
+      .number()
+      .optional()
+      .describe(
+        '018096 — TAXABLE capital gains under s.34.2, from line 275 of federal Schedule 73. Enter the federal figure AS FILED: it is already at the ½ inclusion rate and the Alberta form grosses it back up ("line 275 … × 2"). Pre-doubling it here would count it twice.',
+      ),
+    section342AllowableCapitalLosses: z
+      .number()
+      .optional()
+      .describe(
+        '018098 — ALLOWABLE capital losses under s.34.2, from line 285 of federal Schedule 73. Same treatment as 018096: enter the federal figure as filed; the form doubles it.',
       ),
     electingPropertyTransfer: YesNo.optional().describe(
       'AT1 018001 — "Is the corporation electing to transfer property as stated under ACTA section 14.1(3), 14.2(3) or 16.1(3)?" MANDATORY on the wire, and §3.2.3.19 supplies its own default: Yes files 1, anything else files 2. Unlike the nine yes/no questions on the AT1 jacket — where the specification gives no default, so a silent No would answer for the corporation — leaving this blank is a No on the instruction of TRA itself. Answering Yes also obliges form AT107, AT108 or AT109 to be submitted with the RSI, which this product does not produce; the schedule raises that as a review issue.',
@@ -1818,6 +1916,47 @@ export const AlbertaCca13Row = z
       .number()
       .optional()
       .describe('013003 — Alberta opening UCC, when it differs from federal. Blank = federal.'),
+    additions: z
+      .number()
+      .optional()
+      .describe(
+        '013005 — Alberta cost of acquisitions during the year. §3.2.3.14: "if the ' +
+          'acquisitions for Alberta purposes differ from the federal acquisitions, enter the ' +
+          'Alberta amount. Otherwise, enter the amount at fed 008203." Blank = federal.',
+      ),
+    netAdjustments: z
+      .number()
+      .optional()
+      .describe(
+        '013007 — Alberta net adjustments. SIGNED: this is the one column the specification ' +
+          'marks "+/-", and the printed form shows negatives in brackets. §3.2.3.14 defaults it ' +
+          'to fed 008205. Blank = federal.',
+      ),
+    dispositions: z
+      .number()
+      .optional()
+      .describe(
+        '013009 — Alberta proceeds of dispositions. §3.2.3.14 defaults it to fed 008207 and ' +
+          'warns proceeds cannot exceed the original capital cost of the asset. Blank = federal.',
+      ),
+    immediateExpensing: z
+      .number()
+      .optional()
+      .describe(
+        '013039 / 013045 — the Alberta designated immediate expensing property (DIEP) amount. ' +
+          'The engine models the designation and the resulting claim as one figure, so this ' +
+          'single entry drives both printed columns. Blank = federal.',
+      ),
+    aiip: z
+      .boolean()
+      .optional()
+      .describe(
+        "013029 — whether this class's acquisitions are accelerated investment incentive " +
+          'property or fall in Classes 54 to 56, which earns the enhanced first-year uplift. ' +
+          'NOTE: the printed form asks for a DOLLAR amount in column 14; the engine models AIIP ' +
+          'as a per-class flag, so this is a narrower capability than the form describes — it ' +
+          'cannot yet express a class whose acquisitions are only PARTLY AIIP. Blank = federal.',
+      ),
     claim: z
       .number()
       .optional()
@@ -1825,11 +1964,30 @@ export const AlbertaCca13Row = z
         '013019 — the Alberta discretionary claim. Blank = the same as federal; an ' +
           'explicit 0 claims nothing for Alberta, which is a real answer.',
       ),
+    classEmptied: z
+      .boolean()
+      .optional()
+      .describe(
+        'The class held no assets at year-end, which is what turns a positive remaining UCC ' +
+          'into the terminal loss at 013017. Not itself a printed line — it is the fact the ' +
+          'form needs in order to compute one.',
+      ),
   })
   .meta({ id: 'AlbertaCca13Row' });
 
 export const AlbertaCca13Values = z
-  .object({ classes: z.array(AlbertaCca13Row).optional() })
+  .object({
+    classes: z.array(AlbertaCca13Row).optional(),
+    immediateExpensingLimit: z
+      .number()
+      .optional()
+      .describe(
+        '013125 — the immediate expensing limit allocated to this corporation. Per RETURN, not ' +
+          'per class. §3.2.3.14: relevant only where the corporation is associated with one or ' +
+          'more eligible persons or partnerships (EPOPs), in which case it should equal fed ' +
+          '008125; left blank when not associated.',
+      ),
+  })
   .meta({ id: 'AlbertaCca13Values' });
 
 /**
@@ -1931,6 +2089,22 @@ export const AlbertaSred16Values = z
           'WHOLE available pool; the claim is discretionary, so a corporation with no ' +
           'income to shelter would normally claim nil and carry the pool forward. Capped ' +
           'at line 018.',
+      ),
+    federalOpeningPoolBalance: z
+      .number()
+      .optional()
+      .describe(
+        'The FEDERAL opening pool balance, for the form-required test — NOT a printed Alberta ' +
+          'line. The specification makes this schedule required when the opening balance OR the ' +
+          'claim differs from federal; with no federal figure to compare against, that test can ' +
+          'never fire and the schedule cannot tell it is required. Blank = no comparison made.',
+      ),
+    federalAmountClaimed: z
+      .number()
+      .optional()
+      .describe(
+        'The FEDERAL pool deduction claimed, the other half of the form-required test above. ' +
+          'Also not a printed Alberta line. Blank = no comparison made.',
       ),
   })
   .meta({ id: 'AlbertaSred16Values' });

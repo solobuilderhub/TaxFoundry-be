@@ -82,6 +82,25 @@ export function assembleSchedule16(ri: ReturnInput): AlbertaSchedule16Result | u
      * answers for a corporation that has income to shelter.
      */
     ...(present(s.amountClaimed) ? { amountClaimed: num(s.amountClaimed) } : {}),
+    /*
+     * The two FEDERAL comparison figures behind the form-required test.
+     *
+     * Passed only when entered, for the same reason as `amountClaimed` but with
+     * a sharper failure mode: the engine tests `federalOpeningPoolBalance !==
+     * undefined && fed !== alberta`, so coercing a blank to 0 would declare a
+     * divergence against a federal nil the preparer never asserted, and mark
+     * the schedule required on every return that carries any pool at all.
+     *
+     * Deliberately NOT part of the `entered` gate above — a federal figure with
+     * no Alberta pool beside it is a comparison with nothing to compare, not a
+     * Schedule 16 to file.
+     */
+    ...(present(s.federalOpeningPoolBalance)
+      ? { federalOpeningPoolBalance: num(s.federalOpeningPoolBalance) }
+      : {}),
+    ...(present(s.federalAmountClaimed)
+      ? { federalAmountClaimed: num(s.federalAmountClaimed) }
+      : {}),
   });
 }
 

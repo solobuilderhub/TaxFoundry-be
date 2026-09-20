@@ -123,11 +123,39 @@ function albertaCcaOverrides(ri: Ri) {
    * independent lists and a preparer overriding only class 10 sends one row.
    */
   return (ri.albertaCca13?.classes ?? [])
-    .filter((c: AlbertaCca13Row) => c?.ccaClass && (present(c.openingUCC) || present(c.claim)))
+    .filter(
+      (c: AlbertaCca13Row) =>
+        /*
+         * Any Alberta figure at all keeps the row — not just opening UCC or the
+         * claim. Those two used to be the whole gate, which silently discarded a
+         * row whose only divergence was, say, Alberta proceeds of disposition:
+         * the engine has always accepted six more override columns than the
+         * contract exposed, so such a row had nowhere to go and was dropped here
+         * rather than filed. Widening the gate without widening the map would
+         * reintroduce the same silent loss one level down.
+         */
+        c?.ccaClass &&
+        (present(c.openingUCC) ||
+          present(c.claim) ||
+          present(c.additions) ||
+          present(c.netAdjustments) ||
+          present(c.dispositions) ||
+          present(c.immediateExpensing) ||
+          present(c.aiip) ||
+          present(c.classEmptied)),
+    )
     .map((c: AlbertaCca13Row) => ({
       ccaClass: String(c.ccaClass),
       ...(present(c.openingUCC) ? { openingUCC: num(c.openingUCC) } : {}),
+      ...(present(c.additions) ? { additions: num(c.additions) } : {}),
+      ...(present(c.netAdjustments) ? { netAdjustments: num(c.netAdjustments) } : {}),
+      ...(present(c.dispositions) ? { dispositions: num(c.dispositions) } : {}),
+      ...(present(c.immediateExpensing) ? { immediateExpensing: num(c.immediateExpensing) } : {}),
+      // Flags, not money — `num()` would turn `false` into 0 and lose the
+      // distinction between "answered no" and "left blank" that `present` keeps.
+      ...(present(c.aiip) ? { aiip: Boolean(c.aiip) } : {}),
       ...(present(c.claim) ? { claim: num(c.claim) } : {}),
+      ...(present(c.classEmptied) ? { classEmptied: Boolean(c.classEmptied) } : {}),
     }));
 }
 
@@ -135,9 +163,12 @@ function scheduleThirteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
   const federalClasses = fed.ccaClasses ?? [];
   if (federalClasses.length === 0) return undefined;
   const albertaOverrides = albertaCcaOverrides(ri);
+  // 013125 — per RETURN, not per class, so it rides on the slice rather than a row.
+  const limit = ri.albertaCca13?.immediateExpensingLimit;
   const result = computeAlbertaSchedule13({
     federalClasses,
     ...(albertaOverrides.length ? { albertaOverrides } : {}),
+    ...(present(limit) ? { immediateExpensingLimit: num(limit) } : {}),
     ...divergenceFlags(ab),
   });
   // TRA forbids completing the form at all when neither divergence flag is
@@ -259,7 +290,81 @@ function scheduleEighteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
   // dispositions at all) never got a Schedule 18 in the first place, so its
   // ABIL entries could never reach the wire regardless of this function's
   // own `abilEntries` handling.
-  if (categorized.length === 0 && abilEntries.length === 0) return undefined;
+  const s18 = ri.albertaSchedule18;
+
+  /*
+   * Alberta's per-category overrides, keyed by category the same way the
+   * federal totals below are. `outlays` is not collected: the schedule states
+   * it always equals the federal figure.
+   */
+  const albertaCategories: Record<string, { proceeds?: number; acb?: number }> = {};
+  for (const r of s18?.albertaCategories ?? []) {
+    if (!r?.category) continue;
+    if (!present(r.proceeds) && !present(r.acb)) continue;
+    albertaCategories[r.category] = {
+      ...(present(r.proceeds) ? { proceeds: num(r.proceeds) } : {}),
+      ...(present(r.acb) ? { acb: num(r.acb) } : {}),
+    };
+  }
+
+  /*
+   * The schedule-level figures (018060-018098). None is derived from anything
+   * this engine models federally, so each is a plain entry that defaults to
+   * nil — and each is its own printed line, not a component of the six
+   * category totals.
+   */
+  const scheduleFigures = {
+    ...(present(s18?.unappliedLppLosses)
+      ? { unappliedLppLosses: num(s18?.unappliedLppLosses) }
+      : {}),
+    ...(present(s18?.capitalGainsDividends)
+      ? { capitalGainsDividends: num(s18?.capitalGainsDividends) }
+      : {}),
+    ...(present(s18?.federalReserveOpening)
+      ? { federalReserveOpening: num(s18?.federalReserveOpening) }
+      : {}),
+    ...(present(s18?.federalReserveClosing)
+      ? { federalReserveClosing: num(s18?.federalReserveClosing) }
+      : {}),
+    ...(present(s18?.albertaReserveOpening)
+      ? { albertaReserveOpening: num(s18?.albertaReserveOpening) }
+      : {}),
+    ...(present(s18?.albertaReserveClosing)
+      ? { albertaReserveClosing: num(s18?.albertaReserveClosing) }
+      : {}),
+    ...(present(s18?.gainOnDonatedSecurities)
+      ? { gainOnDonatedSecurities: num(s18?.gainOnDonatedSecurities) }
+      : {}),
+    ...(present(s18?.gainOnDonatedEcologicalLand)
+      ? { gainOnDonatedEcologicalLand: num(s18?.gainOnDonatedEcologicalLand) }
+      : {}),
+    ...(present(s18?.exemptionThreshold)
+      ? { exemptionThreshold: num(s18?.exemptionThreshold) }
+      : {}),
+    ...(present(s18?.capitalGainsFromActualProperty)
+      ? { capitalGainsFromActualProperty: num(s18?.capitalGainsFromActualProperty) }
+      : {}),
+    ...(present(s18?.section342TaxableCapitalGains)
+      ? { section342TaxableCapitalGains: num(s18?.section342TaxableCapitalGains) }
+      : {}),
+    ...(present(s18?.section342AllowableCapitalLosses)
+      ? { section342AllowableCapitalLosses: num(s18?.section342AllowableCapitalLosses) }
+      : {}),
+  };
+
+  /*
+   * Same reasoning the ABIL guard above records: a corporation whose only
+   * Schedule 18 content is an Alberta override or a schedule-level figure
+   * (s.34.2 gains, say, with no categorised federal disposition at all) would
+   * otherwise never get a Schedule 18, and the figure could not reach the wire.
+   */
+  if (
+    categorized.length === 0 &&
+    abilEntries.length === 0 &&
+    Object.keys(albertaCategories).length === 0 &&
+    Object.keys(scheduleFigures).length === 0
+  )
+    return undefined;
 
   const federalCategories: Record<string, { proceeds: number; acb: number; outlays: number }> = {};
   for (const d of categorized) {
@@ -272,6 +377,8 @@ function scheduleEighteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
 
   const result = computeAlbertaSchedule18({
     federalCategories,
+    ...(Object.keys(albertaCategories).length ? { albertaCategories } : {}),
+    ...scheduleFigures,
     ...(abilEntries.length > 0 ? { abilEntries } : {}),
     /*
      * 018001 — the ACTA 14.1/14.2/16.1 transfer election. Mandatory, and it
@@ -893,7 +1000,11 @@ function scheduleTwenty(fed: Fed, ri: Ri, schedule12: Schedule12Result) {
   const charitableCurrentYear = present(d.charitableCurrentYear)
     ? num(d.charitableCurrentYear)
     : num(fed.charitableDonations);
-  const charitableOpening = num(fed.openingDonationPool);
+  // Same override-then-federal shape as `charitableCurrentYear` above: an
+  // entered Alberta balance wins, a blank falls back to the federal pool.
+  const charitableOpening = present(d.charitableOpening)
+    ? num(d.charitableOpening)
+    : num(fed.openingDonationPool);
   // `fed.charitableDonations` is CHARITABLE ONLY and `fed.culturalEcologicalGifts`
   // is the combined cultural + ecological total — two separate fields since
   // `scheduleTwo` in `assemble-t2-input.ts` stopped combining them (they're
