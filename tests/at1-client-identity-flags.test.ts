@@ -245,6 +245,64 @@ describe('Alberta CCA overrides with no federal basis', () => {
   });
 });
 
+describe('a federal basis exists, an Alberta override was entered on it, and the jacket never said so', () => {
+  /*
+   * The fifth appearance of the "figure entered, dropped by a gate the
+   * preparer never saw" shape. `scheduleThirteen` correctly refuses to file
+   * Schedule 13 unless the AT1 jacket's own divergence questions are answered
+   * Yes — §3.2.3 forbids completing the form otherwise — but the refusal used
+   * to have no voice: the override saved, survived reload, and changed
+   * nothing, with no flag anywhere in this specific combination (federal
+   * basis present, so `AT1_CCA_NO_FEDERAL_BASIS` stays quiet; that flag is
+   * for a DIFFERENT gap).
+   */
+  const base = {
+    ...withIncome,
+    cca: { classes: [{ ccaClass: '8', openingUCC: 100_000 }] },
+    albertaCca13: { classes: [{ ccaClass: '8', claim: 18_000 }] },
+  };
+
+  it('fires when neither jacket divergence question is Yes', () => {
+    expect(codes('AT1', base)).toContain('AT1_CCA_DIVERGENCE_NOT_DECLARED');
+    expect(codes('AT1', { ...base, alberta: { reportsDifferentAlbertaIncome: 'no' } })).toContain(
+      'AT1_CCA_DIVERGENCE_NOT_DECLARED',
+    );
+  });
+
+  it('names both jacket questions and says the override has no effect', () => {
+    const msg =
+      at1SilentNilFlags('AT1', base, {}).find((f) => f.code === 'AT1_CCA_DIVERGENCE_NOT_DECLARED')
+        ?.message ?? '';
+    expect(msg).toMatch(/different net income/);
+    expect(msg).toMatch(/discretionary amounts/);
+    expect(msg).toMatch(/NOT filed/);
+  });
+
+  it('stays quiet once either divergence question is Yes', () => {
+    expect(
+      codes('AT1', { ...base, alberta: { reportsDifferentAlbertaIncome: 'yes' } }),
+    ).not.toContain('AT1_CCA_DIVERGENCE_NOT_DECLARED');
+    expect(
+      codes('AT1', { ...base, alberta: { electsDifferentDiscretionaryAmounts: 'yes' } }),
+    ).not.toContain('AT1_CCA_DIVERGENCE_NOT_DECLARED');
+  });
+
+  it('stays quiet when there is no federal basis — that is the other flag’s job', () => {
+    expect(
+      codes('AT1', {
+        ...withIncome,
+        albertaCca13: { classes: [{ ccaClass: '8', claim: 18_000 }] },
+      }),
+    ).not.toContain('AT1_CCA_DIVERGENCE_NOT_DECLARED');
+  });
+
+  it('stays quiet when no Alberta override was entered at all', () => {
+    expect(
+      codes('AT1', { ...withIncome, cca: { classes: [{ ccaClass: '8', openingUCC: 100_000 }] } }),
+    ).not.toContain('AT1_CCA_DIVERGENCE_NOT_DECLARED');
+  });
+});
+
 describe('the CCA flag counts rows that carry data, not rows that exist', () => {
   /*
    * Reported as "not shipped" after a deploy that contained it. It was

@@ -704,6 +704,47 @@ export function at1SilentNilFlags(
     });
   }
 
+  /*
+   * A federal basis exists, an Alberta override was entered on it, and the
+   * whole schedule is STILL dropped — because the AT1 jacket's own two
+   * divergence questions (000060 "reports different Alberta income" /
+   * 000061 "elects different discretionary amounts") are unanswered.
+   * `scheduleThirteen` (assemble-at1-schedules.ts) is correct to gate this
+   * way: §3.2.3 forbids completing form 013 at all unless one of those is
+   * Yes, so filing it regardless would file something the spec says cannot
+   * exist. But the gate has no voice of its own — a preparer who fills the
+   * Alberta CCA grid and never touches the jacket's two radios gets a row
+   * that saves, survives reload, and produces NOTHING: no Schedule 13 in the
+   * payload, no change to Alberta net income, and (before this flag) no
+   * indication anywhere that the entry was ever read.
+   *
+   * The fifth appearance of the shape this file keeps finding: a figure
+   * entered on the Alberta side, discarded by a gate on a DIFFERENT part of
+   * the return the preparer had no reason to think was connected. IEG did it
+   * on an empty group roster, Schedule 18 on an uncategorized disposition,
+   * Schedule 13 on an empty federal basis (immediately above), Schedule 12
+   * on an SR&ED-only divergence. This is the same schedule, the other gate.
+   */
+  const abDivergence = (ri.alberta ?? {}) as Record<string, unknown>;
+  const divergenceDeclared =
+    abDivergence.reportsDifferentAlbertaIncome === 'yes' ||
+    abDivergence.electsDifferentDiscretionaryAmounts === 'yes';
+  if (albertaCcaRows > 0 && federalCcaRows > 0 && !divergenceDeclared) {
+    flags.push({
+      severity: 'amber',
+      code: 'AT1_CCA_DIVERGENCE_NOT_DECLARED',
+      message:
+        `Schedule 13 has ${albertaCcaRows} Alberta CCA class(es) entered against the federal claim, but neither ` +
+        'AT1 jacket question ("Does the corporation report a different net income for Alberta purposes?" / ' +
+        '"Does the corporation elect to claim different discretionary amounts for Alberta purposes?") is ' +
+        'answered Yes — the specification forbids filing Schedule 13 in that state, so it is NOT filed and the ' +
+        'Alberta override has no effect on Alberta taxable income. Answer one of those two jacket questions Yes ' +
+        'to have the override reach the return, or clear the Alberta CCA row if it was entered in error.',
+      line: '013',
+      resolved: false,
+    });
+  }
+
   // No income basis at all — every federal input schedule empty.
   const albertaTaxableIncome = fold.albertaTaxableIncome ?? 0;
   const is = (ri.incomeStatement ?? {}) as Record<string, unknown>;
