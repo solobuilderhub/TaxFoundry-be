@@ -109,7 +109,7 @@ function divergenceFlags(ab: AlbertaValues) {
  * that actually carry an Alberta figure produce an override row, so a return
  * whose Alberta CCA matches federal sends none and Schedule 13 stays absent.
  */
-function albertaCcaOverrides(ri: Ri) {
+function albertaCcaOverrides(ri: Ri, taxYear: number) {
   /*
    * Read from `ri.albertaCca13`, AT1 Schedule 13's own slice.
    *
@@ -175,6 +175,15 @@ function albertaCcaOverrides(ri: Ri) {
       // Flags, not money — `num()` would turn `false` into 0 and lose the
       // distinction between "answered no" and "left blank" that `present` keeps.
       ...(present(c.aiip) ? { aiip: Boolean(c.aiip) } : {}),
+      /*
+       * The year the accelerated property became AVAILABLE FOR USE, which
+       * selects column 18's relevant factor — nil for most classes from 2024.
+       * An AIIP addition is a current-year acquisition by definition, so the
+       * tax year is the answer and the preparer is not asked for it.
+       */
+      ...(present(c.aiip) || present(c.aiipAcquisitions)
+        ? { aiipAvailableForUseYear: taxYear }
+        : {}),
       ...(present(c.claim) ? { claim: num(c.claim) } : {}),
       ...(present(c.classEmptied) ? { classEmptied: Boolean(c.classEmptied) } : {}),
     }));
@@ -248,7 +257,10 @@ function albertaStraightLineClasses(fed: Fed, ri: Ri) {
 
 function scheduleThirteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
   const federalClasses = fed.ccaClasses ?? [];
-  const albertaOverrides = albertaCcaOverrides(ri);
+  const albertaOverrides = albertaCcaOverrides(
+    ri,
+    new Date(String(fed.period?.end ?? '')).getUTCFullYear(),
+  );
   /*
    * Federal is a default source, not a prerequisite.
    *

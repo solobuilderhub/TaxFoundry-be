@@ -99,7 +99,13 @@ function scheduleOne(ri: Ri) {
 }
 
 /** Schedule 8 — depreciable property by class (engine computes CCA/recapture/terminal loss). */
-function scheduleEight(ri: Ri) {
+/**
+ * `taxYear` is the calendar year the tax year ENDS in, used as the year the
+ * AIIP became available for use. An accelerated addition is by definition a
+ * current-year acquisition, so the two coincide; stating it explicitly is what
+ * selects the right relevant factor, which is nil for most classes from 2024.
+ */
+function scheduleEight(ri: Ri, taxYear: number) {
   const ccaClasses = (ri.cca?.classes ?? [])
     .filter((c: CcaClass) => c?.ccaClass)
     .map((c: CcaClass) => ({
@@ -108,7 +114,7 @@ function scheduleEight(ri: Ri) {
       additions: num(c.additions),
       dispositions: num(c.dispositions),
       immediateExpensing: num(c.immediateExpensing),
-      ...(c.aiip ? { aiip: true } : {}),
+      ...(c.aiip ? { aiip: true, aiipAvailableForUseYear: taxYear } : {}),
       ...(c.classEmptied ? { classEmptied: true } : {}),
       // An explicit 0 is a real discretionary answer — "claim nothing on this
       // class federally" — and is NOT the same as leaving the box blank, which
@@ -1018,7 +1024,7 @@ export function assembleT2Input(ri: Ri, engagement: EngagementLike): AssembledFe
     ...scheduleFour(returnInput),
     ...scheduleSix(returnInput),
     ...scheduleSeven(returnInput, bookNetIncome),
-    ...scheduleEight(returnInput),
+    ...scheduleEight(returnInput, new Date(iso(engagement.taxYearEnd)).getUTCFullYear()),
     ...scheduleEightNewLayers(returnInput, engagement),
     ...scheduleTwentyOne(returnInput),
     ...scheduleThirtyOne(returnInput),

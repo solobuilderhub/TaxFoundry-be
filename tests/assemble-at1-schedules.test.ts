@@ -1781,3 +1781,54 @@ describe('AT1 S13 → S12 → the jacket, with no federal CCA behind it', () => 
     expect(after.get('012002001')).toBe(before.get('012002001'));
   });
 });
+
+/**
+ * The AIIP first-year enhancement (013035) is being phased out, and the engine
+ * applied a flat ½ in every year regardless. On an ordinary class available for
+ * use after 2023 the relevant factor is NIL, so a flat ½ handed the pool a
+ * phantom uplift and claimed CCA nobody is entitled to.
+ *
+ * The availability year is not asked of the preparer: an accelerated addition
+ * is a current-year acquisition by definition, so the composer supplies the tax
+ * year. These tests exist to prove that actually reaches the engine — the
+ * factor is only as right as the year behind it.
+ */
+describe('AT1 S13 — the AIIP phase-out reaches the filed figures', () => {
+  // The shared fixture's tax year ends in 2024, which is past the phase-out.
+  const noFederalCca = { ...fed, ccaClasses: [] };
+  const filed = (row: Record<string, unknown>) => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        noFederalCca,
+        { ...riWithDivergence, albertaCca13: { classes: [{ ccaClass: '8', ...row }] } },
+        { isCcpc: true },
+      ),
+    );
+    const s = out.schedulePayloads?.find((p) => p.scheduleId === '013');
+    return new Map((s?.values ?? []).map((v) => [v.lineItemId, v.value]));
+  };
+
+  it('files no enhancement at 013035 for an ordinary class', () => {
+    const byId = filed({ openingUCC: 0, additions: 100_000, aiipAcquisitions: 100_000 });
+    // A flat ½ would have put 50,000 here.
+    expect(byId.get('013035001') ?? 0).toBe(0);
+  });
+
+  it('claims the same CCA as the identical class without the designation', () => {
+    const withAiip = filed({ openingUCC: 0, additions: 100_000, aiipAcquisitions: 100_000 });
+    // AIIP still suspends the half-year rule, so the base is the full addition
+    // either way here; what it no longer buys is an uplift on top.
+    expect(withAiip.get('013019001')).toBe(20_000); // 100,000 × 20%
+    // The phantom base would have claimed 20% × 150,000 = 30,000.
+    expect(withAiip.get('013019001')).not.toBe(30_000);
+  });
+
+  it('still suspends the half-year rule, which is what AIIP now buys', () => {
+    const withAiip = filed({ openingUCC: 0, additions: 100_000, aiipAcquisitions: 100_000 });
+    const without = filed({ openingUCC: 0, additions: 100_000 });
+    expect(withAiip.get('013037001') ?? 0).toBe(0);
+    // Without the designation the half-year rule halves the base: 20% × 50,000.
+    expect(without.get('013019001')).toBe(10_000);
+  });
+});
