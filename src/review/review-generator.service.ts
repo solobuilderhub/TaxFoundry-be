@@ -695,10 +695,12 @@ export function at1SilentNilFlags(
       severity: 'amber',
       code: 'AT1_CCA_NO_FEDERAL_BASIS',
       message:
-        `Schedule 13 has ${albertaCcaRows} Alberta CCA class(es) but the federal CCA schedule is empty, so no ` +
-        'Schedule 13 is filed and those figures are dropped. Alberta CCA is an OVERRIDE of the federal claim: ' +
-        'enter the classes on the federal Capital Cost Allowance (S8) schedule in this engagement, then state ' +
-        'the Alberta opening UCC or claim here only where Alberta differs.',
+        `Schedule 13 has ${albertaCcaRows} Alberta CCA class(es) with no federal Capital Cost Allowance (S8) ` +
+        'basis. The schedule computes and files on the Alberta figures alone, which is correct when the federal ' +
+        'T2 was prepared in another package. But Schedule 12 reconciles Alberta to federal by DIFFERENCE, so with ' +
+        'no federal claim to net against, the whole Alberta claim becomes a reconciling DEDUCTION: confirm the ' +
+        'federal net income entered on Schedule 12 does not already have this capital cost allowance deducted. ' +
+        'If the T2 was prepared here, enter the classes on the S8 schedule so the two sides pair instead.',
       line: '013',
       resolved: false,
     });

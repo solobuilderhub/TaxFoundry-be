@@ -5,7 +5,12 @@
  */
 import { z } from 'zod';
 import { YesNo } from './common.js';
-import { At1DispositionCategory, ReserveType } from './t2-input.js';
+import {
+  At1DispositionCategory,
+  Class13LeaseholdLayer,
+  Class14LimitedLifeProperty,
+  ReserveType,
+} from './t2-input.js';
 
 /**
  * Alberta AT1 jacket — the mandatory fields the federal schedules do not
@@ -1947,15 +1952,63 @@ export const AlbertaCca13Row = z
           'The engine models the designation and the resulting claim as one figure, so this ' +
           'single entry drives both printed columns. Blank = federal.',
       ),
+    aiipAcquisitions: z
+      .number()
+      .optional()
+      .describe(
+        '013029 (column 14) — the acquisitions that are accelerated investment incentive ' +
+          'property or fall in Classes 54 to 56, as the DOLLAR amount the form prints. A class ' +
+          'whose acquisitions are only PARTLY accelerated is stated exactly. Blank = federal.',
+      ),
     aiip: z
       .boolean()
       .optional()
       .describe(
-        "013029 — whether this class's acquisitions are accelerated investment incentive " +
-          'property or fall in Classes 54 to 56, which earns the enhanced first-year uplift. ' +
-          'NOTE: the printed form asks for a DOLLAR amount in column 14; the engine models AIIP ' +
-          'as a per-class flag, so this is a narrower capability than the form describes — it ' +
-          'cannot yet express a class whose acquisitions are only PARTLY AIIP. Blank = federal.',
+        'Whole-class AIIP flag — "all of the acquisitions are accelerated". Kept for returns ' +
+          'entered before column 14 took an amount; `aiipAcquisitions` states the same fact the ' +
+          'way the form asks and wins when both are present. Blank = federal.',
+      ),
+    diepAcquisitions: z
+      .number()
+      .optional()
+      .describe(
+        '013039 (column 4) — the part of the acquisitions designated immediate expensing ' +
+          'property. A subset of column 3, not an addition to it. Blank = federal.',
+      ),
+    diepProceeds: z
+      .number()
+      .optional()
+      .describe(
+        '013041 (column 9) — proceeds of disposition of the DIEP. A subset of column 8. Blank = federal.',
+      ),
+    diepUcc: z
+      .number()
+      .optional()
+      .describe('013043 (column 11) — the UCC amount that relates to the DIEP. Blank = federal.'),
+    assistanceReceived: z
+      .number()
+      .optional()
+      .describe(
+        '013031 (column 6) — assistance received or receivable for a property after its ' +
+          'disposition. The form captions this "Amount FROM column 5", so it is a BREAKDOWN of ' +
+          'the net adjustments at 013007, NOT a further movement of the pool — enter the net ' +
+          'adjustment at 007 as well. It is disclosed separately because the AIIP arithmetic in ' +
+          'columns 16 and 19 is written in terms of it. Blank = federal.',
+      ),
+    assistanceRepaid: z
+      .number()
+      .optional()
+      .describe(
+        '013033 (column 7) — assistance REPAID after disposition. Also a breakdown of 013007, ' +
+          'on the same terms as 013031. Blank = federal.',
+      ),
+    rate: z
+      .number()
+      .optional()
+      .describe(
+        '013013 (column 20) — the CCA rate as a PERCENT, the way the form prints it and the ' +
+          'specification transmits it: enter 20 for 20%, 10.5 for 10.5%. §3.2.3.14 allows input ' +
+          '"for classes where the rate is elective". Blank takes the class\'s statutory rate.',
       ),
     claim: z
       .number()
@@ -1986,6 +2039,60 @@ export const AlbertaCca13Values = z
           'per class. §3.2.3.14: relevant only where the corporation is associated with one or ' +
           'more eligible persons or partnerships (EPOPs), in which case it should equal fed ' +
           '008125; left blank when not associated.',
+      ),
+
+    /*
+     * Classes 13 and 14 are straight-line, not declining-balance, so they do not
+     * fit a row of the grid above — no rate, no half-year rule, no AIIP, no
+     * immediate expensing. They are their own sub-forms, exactly as on the
+     * federal Schedule 8.
+     *
+     * Alberta cannot lease a DIFFERENT term on the same property, so the layers
+     * and the opening balance are shared with federal and these fields are only
+     * needed where there is no federal Schedule 8 to read them from. The claim
+     * is the part that genuinely diverges.
+     */
+    class13Claim: z
+      .number()
+      .optional()
+      .describe(
+        "Alberta's class 13 (leasehold interests) claim. Blank = the same as the federal claim, " +
+          'or the computed maximum where there is no federal Schedule 8.',
+      ),
+    class13OpeningUCC: z
+      .number()
+      .optional()
+      .describe(
+        'Class 13 undepreciated capital cost before this year’s deduction. Needed only when the ' +
+          'federal Schedule 8 is absent; blank takes the federal figure.',
+      ),
+    class13Layers: z
+      .array(Class13LeaseholdLayer)
+      .optional()
+      .describe(
+        'Class 13 leasehold layers added this tax year. Shared with federal — supply them here ' +
+          'only when the T2 was prepared in another package.',
+      ),
+    class14Claim: z
+      .number()
+      .optional()
+      .describe(
+        "Alberta's class 14 (limited-life intangibles) claim. Blank = the same as the federal " +
+          'claim, or the computed maximum where there is no federal Schedule 8.',
+      ),
+    class14OpeningUCC: z
+      .number()
+      .optional()
+      .describe(
+        'Class 14 undepreciated capital cost before this year’s deduction. Needed only when the ' +
+          'federal Schedule 8 is absent; blank takes the federal figure.',
+      ),
+    class14Properties: z
+      .array(Class14LimitedLifeProperty)
+      .optional()
+      .describe(
+        'Class 14 limited-life properties added this tax year. Shared with federal — supply them ' +
+          'here only when the T2 was prepared in another package.',
       ),
   })
   .meta({ id: 'AlbertaCca13Values' });

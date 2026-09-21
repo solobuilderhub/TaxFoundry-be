@@ -1541,3 +1541,243 @@ describe('AT1 S20 — the Alberta charitable opening balance', () => {
     expect(byId.get('020002001')).toBe(25_000);
   });
 });
+
+/**
+ * AT1 Schedule 13 on a return with NO federal CCA at all.
+ *
+ * The form is self-contained, so a corporation whose T2 was prepared in another
+ * package still has a complete Schedule 13 to file. `scheduleThirteen` used to
+ * return undefined the moment `fed.ccaClasses` was empty, which threw the whole
+ * entered grid away before the engine — which computes it correctly — was ever
+ * called. Every AT1-only CCA case failed at that one line.
+ */
+describe('AT1 S13 — the AT1-side grid is a basis of its own', () => {
+  const noFederalCca = { ...fed, ccaClasses: [] };
+
+  const filed = (albertaCca13: Record<string, unknown>) => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        noFederalCca,
+        { ...riWithDivergence, albertaCca13 },
+        { isCcpc: true },
+      ),
+    );
+    const s = out.schedulePayloads?.find((p) => p.scheduleId === '013');
+    return { payload: s, byId: new Map((s?.values ?? []).map((v) => [v.lineItemId, v.value])) };
+  };
+
+  it('files a Schedule 13 instead of discarding the grid', () => {
+    const { payload } = filed({ classes: [{ ccaClass: '8', openingUCC: 100_000 }] });
+    expect(payload).toBeDefined();
+  });
+
+  it('computes the claim and the closing balance from the Alberta figures alone', () => {
+    const { byId } = filed({ classes: [{ ccaClass: '8', openingUCC: 100_000 }] });
+    expect(byId.get('013003001')).toBe(100_000); // opening UCC
+    expect(byId.get('013019001')).toBe(20_000); // class 8 at 20%, claiming the max
+    expect(byId.get('013021001')).toBe(80_000); // closing UCC
+    expect(byId.get('013027001')).toBe(20_000); // total CCA → Schedule 12 line 004
+  });
+
+  it('recaptures when proceeds exceed the pool, and floors the closing balance', () => {
+    const { byId } = filed({
+      classes: [{ ccaClass: '8', openingUCC: 50_000, dispositions: 80_000 }],
+    });
+    expect(byId.get('013015001')).toBe(30_000); // recapture, reported positive
+    expect(byId.get('013023001')).toBe(30_000); // total recapture → Sch 12 line 006
+    expect(byId.get('013021001')).toBe(0); // not carried forward negative
+  });
+
+  it('carries several Alberta-only classes, each on its own occurrence', () => {
+    const { byId } = filed({
+      classes: [
+        { ccaClass: '8', openingUCC: 100_000 },
+        { ccaClass: '10', openingUCC: 50_000 },
+      ],
+    });
+    expect(byId.get('013001001')).toBe('8');
+    expect(byId.get('013001002')).toBe('10');
+    // 8 at 20% = 20,000; 10 at 30% = 15,000.
+    expect(byId.get('013027001')).toBe(35_000);
+  });
+
+  it('still files nothing when neither basis carries anything', () => {
+    const out = runAT1Compute(
+      assembleProvincialInput('AT1', noFederalCca, riWithDivergence, { isCcpc: true }),
+    );
+    expect(out.schedulePayloads?.find((p) => p.scheduleId === '013')).toBeUndefined();
+  });
+});
+
+/**
+ * The columns the Form View used to render greyed, now entered end to end —
+ * plus the two unit conversions between the box and the wire.
+ */
+describe('AT1 S13 — the previously locked columns, through the contract', () => {
+  const noFederalCca = { ...fed, ccaClasses: [] };
+  const filed = (row: Record<string, unknown>) => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        noFederalCca,
+        { ...riWithDivergence, albertaCca13: { classes: [{ ccaClass: '8', ...row }] } },
+        { isCcpc: true },
+      ),
+    );
+    const s = out.schedulePayloads?.find((p) => p.scheduleId === '013');
+    return new Map((s?.values ?? []).map((v) => [v.lineItemId, v.value]));
+  };
+
+  it('takes the rate as a PERCENT and files it as one', () => {
+    // The box says "CCA rate %" and the spec transmits "20". The engine
+    // computes with 0.2. Passing 20 through unconverted would claim 2,000%.
+    const byId = filed({ openingUCC: 100_000, rate: 10 });
+    expect(byId.get('013013001')).toBe('10');
+    expect(byId.get('013019001')).toBe(10_000);
+  });
+
+  it('files the DIEP and assistance breakdown columns', () => {
+    const byId = filed({
+      openingUCC: 100_000,
+      additions: 40_000,
+      diepAcquisitions: 25_000,
+      diepProceeds: 3_000,
+      diepUcc: 9_000,
+      netAdjustments: -5_000,
+      assistanceReceived: 5_000,
+      assistanceRepaid: 1_200,
+    });
+    expect(byId.get('013039001')).toBe(25_000);
+    expect(byId.get('013041001')).toBe(3_000);
+    expect(byId.get('013043001')).toBe(9_000);
+    expect(byId.get('013031001')).toBe(5_000);
+    expect(byId.get('013033001')).toBe(1_200);
+    // The assistance is already inside 007 — the pool moves once, not twice.
+    expect(byId.get('013007001')).toBe(-5_000);
+    expect(byId.get('013021001')).toBe(100_000 + 40_000 - 5_000 - Number(byId.get('013019001')));
+  });
+
+  it('files AIIP as the dollar amount the form asks for', () => {
+    const byId = filed({ openingUCC: 100_000, additions: 40_000, aiipAcquisitions: 30_000 });
+    expect(byId.get('013029001')).toBe(30_000);
+  });
+
+  it('a row carrying only a new column is no longer dropped at the gate', () => {
+    // The override filter used to keep a row only for opening UCC or claim.
+    const byId = filed({ additions: 12_000 });
+    expect(byId.get('013005001')).toBe(12_000);
+  });
+});
+
+/**
+ * Classes 13 and 14 are straight-line, so they are their own sub-forms rather
+ * than rows of the declining-balance grid. They existed in the engine with no
+ * contract and no UI behind them at all.
+ */
+describe('AT1 S13 — the straight-line classes 13 and 14', () => {
+  const noFederalCca = { ...fed, ccaClasses: [] };
+  const run = (albertaCca13: Record<string, unknown>) => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        noFederalCca,
+        { ...riWithDivergence, albertaCca13 },
+        { isCcpc: true },
+      ),
+    );
+    const s = out.schedulePayloads?.find((p) => p.scheduleId === '013');
+    return new Map((s?.values ?? []).map((v) => [v.lineItemId, v.value]));
+  };
+
+  it('files a class 13 leasehold layer with no federal Schedule 8 behind it', () => {
+    const byId = run({
+      class13OpeningUCC: 50_000,
+      class13Layers: [{ capitalCost: 50_000, leaseEnd: '2029-12-31' }],
+    });
+    expect(byId.get('013001001')).toBe('13');
+    // A straight-line class has no rate; the spec asks for the literal NA.
+    expect(byId.get('013013001')).toBe('NA');
+    expect(Number(byId.get('013019001'))).toBeGreaterThan(0);
+  });
+
+  it('files a class 14 limited-life property the same way', () => {
+    const byId = run({
+      class14OpeningUCC: 30_000,
+      class14Properties: [{ capitalCost: 30_000, lifeDaysAtAcquisition: 3_650 }],
+    });
+    expect(byId.get('013001001')).toBe('14');
+    expect(byId.get('013013001')).toBe('NA');
+  });
+
+  it("honours Alberta's own class 13 claim", () => {
+    const byId = run({
+      class13OpeningUCC: 50_000,
+      class13Layers: [{ capitalCost: 50_000, leaseEnd: '2029-12-31' }],
+      class13Claim: 1_000,
+    });
+    expect(byId.get('013019001')).toBe(1_000);
+  });
+});
+
+/**
+ * The whole chain, on a return with no federal CCA:
+ *
+ *   013019 (per class) → 013027 → Schedule 12 line 004 → 054 → 090
+ *                      → the jacket's Alberta taxable income (062/066) → tax
+ *
+ * The bench notes carried this as its own defect — "the Area A pairs never
+ * consume the entered schedules, so 062 stays $0". It was the same root cause:
+ * `scheduleThirteen` discarded the grid before any of this ran, so there was no
+ * Schedule 13 for Schedule 12 to consume. Nothing in the chain itself was wrong.
+ */
+describe('AT1 S13 → S12 → the jacket, with no federal CCA behind it', () => {
+  const noFederalCca = { ...fed, ccaClasses: [] };
+  const compute = (albertaCca13?: Record<string, unknown>) =>
+    runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        noFederalCca,
+        { ...riWithDivergence, ...(albertaCca13 ? { albertaCca13 } : {}) },
+        { isCcpc: true },
+      ),
+    );
+  const fieldValue = (r: ReturnType<typeof compute>, line: string) =>
+    (r.fields ?? []).find((f) => String(f.line) === line)?.value;
+
+  it('the Alberta CCA reaches taxable income, and the tax follows it down', () => {
+    const before = compute();
+    const after = compute({ classes: [{ ccaClass: '8', openingUCC: 1_000_000 }] });
+
+    // 1,000,000 of class 8 at 20% = 200,000 of CCA, and nothing else moved.
+    expect(Number(fieldValue(before, 'albertaTaxableIncome'))).toBeGreaterThan(0);
+    expect(Number(fieldValue(after, 'albertaTaxableIncome'))).toBe(
+      Number(fieldValue(before, 'albertaTaxableIncome')) - 200_000,
+    );
+    // Line 066 — after the allocation factor, which is 1 here.
+    expect(fieldValue(after, 'amountTaxableInAlberta')).toBe(
+      fieldValue(after, 'albertaTaxableIncome'),
+    );
+    expect(Number(fieldValue(after, 'albertaTaxPayable'))).toBeLessThan(
+      Number(fieldValue(before, 'albertaTaxPayable')),
+    );
+  });
+
+  it('Schedule 12 carries the claim at line 004 and nets it through to 090', () => {
+    const s12Of = (r: ReturnType<typeof compute>) => {
+      const s12 = r.schedulePayloads?.find((p) => p.scheduleId === '012');
+      return new Map((s12?.values ?? []).map((v) => [v.lineItemId, Number(v.value)]));
+    };
+    const before = s12Of(compute());
+    const after = s12Of(compute({ classes: [{ ccaClass: '8', openingUCC: 1_000_000 }] }));
+
+    // 004 IS the CCA total, straight off 013027.
+    expect(after.get('012004001')).toBe(200_000);
+    // 054 and 090 are subtotals that carry the rest of the reconciliation too,
+    // so what matters is that the claim moves them by exactly its own amount.
+    expect((before.get('012054001') ?? 0) - (after.get('012054001') ?? 0)).toBe(200_000);
+    expect((before.get('012090001') ?? 0) - (after.get('012090001') ?? 0)).toBe(200_000);
+    // Federal net income is untouched by an Alberta-side claim.
+    expect(after.get('012002001')).toBe(before.get('012002001'));
+  });
+});

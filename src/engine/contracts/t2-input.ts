@@ -629,7 +629,7 @@ export const SbdValues = z
   })
   .meta({ id: 'SbdValues' });
 
-const Class13LeaseholdLayer = z
+export const Class13LeaseholdLayer = z
   .object({
     description: z.string().optional(),
     capitalCost: z.number().optional(),
@@ -667,7 +667,7 @@ const Class13LeaseholdLayer = z
   })
   .meta({ id: 'Class13LeaseholdLayer' });
 
-const Class14LimitedLifeProperty = z
+export const Class14LimitedLifeProperty = z
   .object({
     description: z.string().optional(),
     capitalCost: z.number().optional(),

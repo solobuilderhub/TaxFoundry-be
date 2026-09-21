@@ -55,6 +55,7 @@ import {
   type FederalT2Result,
   type IegAgreementInput,
   type LimitedPartnershipLossesResult,
+  leaseholdPeriods,
   type RifeContinuityResult,
   reconcileAlbertaNetIncome,
   type Schedule12FilingInput,
@@ -142,6 +143,13 @@ function albertaCcaOverrides(ri: Ri) {
           present(c.dispositions) ||
           present(c.immediateExpensing) ||
           present(c.aiip) ||
+          present(c.aiipAcquisitions) ||
+          present(c.diepAcquisitions) ||
+          present(c.diepProceeds) ||
+          present(c.diepUcc) ||
+          present(c.assistanceReceived) ||
+          present(c.assistanceRepaid) ||
+          present(c.rate) ||
           present(c.classEmptied)),
     )
     .map((c: AlbertaCca13Row) => ({
@@ -151,6 +159,19 @@ function albertaCcaOverrides(ri: Ri) {
       ...(present(c.netAdjustments) ? { netAdjustments: num(c.netAdjustments) } : {}),
       ...(present(c.dispositions) ? { dispositions: num(c.dispositions) } : {}),
       ...(present(c.immediateExpensing) ? { immediateExpensing: num(c.immediateExpensing) } : {}),
+      ...(present(c.diepAcquisitions) ? { diepAcquisitions: num(c.diepAcquisitions) } : {}),
+      ...(present(c.diepProceeds) ? { diepProceeds: num(c.diepProceeds) } : {}),
+      ...(present(c.diepUcc) ? { diepUcc: num(c.diepUcc) } : {}),
+      ...(present(c.assistanceReceived) ? { assistanceReceived: num(c.assistanceReceived) } : {}),
+      ...(present(c.assistanceRepaid) ? { assistanceRepaid: num(c.assistanceRepaid) } : {}),
+      ...(present(c.aiipAcquisitions) ? { aiipAcquisitions: num(c.aiipAcquisitions) } : {}),
+      /*
+       * 013013 is entered and printed as a PERCENT ("express 20% as 20"), and
+       * the engine computes with a FRACTION. The conversion happens here, once,
+       * at the boundary — passing 20 straight through would claim 2,000% of the
+       * pool, and passing 0.2 to the UI would print a 0.2% rate on the form.
+       */
+      ...(present(c.rate) ? { rate: num(c.rate) / 100 } : {}),
       // Flags, not money — `num()` would turn `false` into 0 and lose the
       // distinction between "answered no" and "left blank" that `present` keeps.
       ...(present(c.aiip) ? { aiip: Boolean(c.aiip) } : {}),
@@ -159,16 +180,102 @@ function albertaCcaOverrides(ri: Ri) {
     }));
 }
 
+/**
+ * Classes 13 and 14 — straight-line, so not a row of the declining-balance grid.
+ *
+ * Alberta cannot lease a different term on the same property, so the LAYERS and
+ * the opening balance are shared with the federal Schedule 8 slice and only the
+ * CLAIM genuinely diverges. The AT1 slice carries its own copies purely for the
+ * case there is no federal Schedule 8 to read them from — the same
+ * federal-is-a-default-source rule the declining-balance classes follow.
+ */
+function albertaStraightLineClasses(fed: Fed, ri: Ri) {
+  const ab = ri.albertaCca13 ?? {};
+  const fedCca = ri.cca ?? {};
+  const taxYearStart = String(fed.period?.start ?? '');
+
+  const rawLayers = ab.class13Layers?.length ? ab.class13Layers : (fedCca.class13Layers ?? []);
+  const layers = rawLayers
+    .filter((l) => l?.capitalCost)
+    .map((l) => ({
+      ...(l.description ? { description: l.description } : {}),
+      capitalCost: num(l.capitalCost),
+      // The engine wants the Schedule III PERIOD count, not a date.
+      periods: leaseholdPeriods(
+        taxYearStart,
+        String(l.leaseEnd ?? ''),
+        l.firstRenewalEnd ? String(l.firstRenewalEnd) : undefined,
+      ),
+      ...(l.claimedToDate != null ? { claimedToDate: num(l.claimedToDate) } : {}),
+      ...(l.proceeds != null ? { proceeds: num(l.proceeds) } : {}),
+      ...(l.isFirstYear ? { isFirstYear: true } : {}),
+      ...(l.aiip ? { aiip: true } : {}),
+    }));
+  const class13 = layers.length
+    ? {
+        layers,
+        openingUCC: present(ab.class13OpeningUCC)
+          ? num(ab.class13OpeningUCC)
+          : num(fedCca.class13OpeningUCC),
+        ...(present(fedCca.class13Claim) ? { federalClaim: num(fedCca.class13Claim) } : {}),
+        ...(present(ab.class13Claim) ? { albertaClaim: num(ab.class13Claim) } : {}),
+      }
+    : undefined;
+
+  const rawProps = ab.class14Properties?.length
+    ? ab.class14Properties
+    : (fedCca.class14Properties ?? []);
+  const properties = rawProps
+    .filter((p) => p?.capitalCost)
+    .map((p) => ({
+      ...(p.description ? { description: p.description } : {}),
+      capitalCost: num(p.capitalCost),
+      lifeDaysAtAcquisition: num(p.lifeDaysAtAcquisition),
+    }));
+  const class14 = properties.length
+    ? {
+        properties,
+        openingUCC: present(ab.class14OpeningUCC)
+          ? num(ab.class14OpeningUCC)
+          : num(fedCca.class14OpeningUCC),
+        ...(present(fedCca.class14Claim) ? { federalClaim: num(fedCca.class14Claim) } : {}),
+        ...(present(ab.class14Claim) ? { albertaClaim: num(ab.class14Claim) } : {}),
+      }
+    : undefined;
+
+  return { ...(class13 ? { class13 } : {}), ...(class14 ? { class14 } : {}) };
+}
+
 function scheduleThirteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
   const federalClasses = fed.ccaClasses ?? [];
-  if (federalClasses.length === 0) return undefined;
   const albertaOverrides = albertaCcaOverrides(ri);
+  /*
+   * Federal is a default source, not a prerequisite.
+   *
+   * This returned `undefined` the moment there were no federal CCA classes,
+   * which threw away a completely entered AT1-side grid: a corporation whose
+   * T2 was prepared in another package has no federal Schedule 8 here, and
+   * Schedule 13 is self-contained precisely so that it can still be filed.
+   * Every H2H AT1-only CCA case failed at this line, before the engine — which
+   * computes those rows correctly — was ever reached.
+   *
+   * A return with neither basis still has no Schedule 13 to file.
+   */
+  const straightLine = albertaStraightLineClasses(fed, ri);
+  if (
+    federalClasses.length === 0 &&
+    albertaOverrides.length === 0 &&
+    !straightLine.class13 &&
+    !straightLine.class14
+  )
+    return undefined;
   // 013125 — per RETURN, not per class, so it rides on the slice rather than a row.
   const limit = ri.albertaCca13?.immediateExpensingLimit;
   const result = computeAlbertaSchedule13({
     federalClasses,
     ...(albertaOverrides.length ? { albertaOverrides } : {}),
     ...(present(limit) ? { immediateExpensingLimit: num(limit) } : {}),
+    ...straightLine,
     ...divergenceFlags(ab),
   });
   // TRA forbids completing the form at all when neither divergence flag is
