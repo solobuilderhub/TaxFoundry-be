@@ -120,3 +120,107 @@ describe('Schedule 12 is filed when Area B is the ONLY divergence', () => {
     expect(byId.has('012090001')).toBe(true);
   });
 });
+
+/**
+ * TF_DEV_BUG_LIST_2026-09-18.md, BUG-104 — the s.110.5 addition floor.
+ *
+ * A section 110.5 / 115(1)(a)(vii) addition exists precisely so a
+ * loss-year corporation can elect to be taxed on enough income to use a
+ * foreign tax credit that would otherwise expire — so the whole point is
+ * that it CAN turn a loss into positive taxable income. The report found a
+ * build where it could not: additions rendered in the as-filed Schedule 12
+ * block but 090/062 stayed pinned at $0 regardless.
+ *
+ * That was fixed by 10f7152 ("Let Schedule 12 line 090 be the taxable
+ * income the return is computed on") reading 062 off the SAME
+ * `schedule12Values` render the wire gets, rather than a second unflored/
+ * flored derivation that could disagree with it. This test exists so the
+ * exact reported repro — a $20,000 loss year, no CCA, a $30,000 Alberta
+ * s.110.5 addition — stays pinned to the report's own expected figures.
+ */
+describe('AT1 S12 — the s.110.5 addition floor (BUG-104)', () => {
+  /*
+   * §3.2.3.13's own instruction, printed under 090: "If there is an amount
+   * at line 082 and line 054 − line 080 is negative, then line 090 must equal
+   * line 082" — not the algebraic sum. A corporation whose deductions exhaust
+   * its income reports its s.110.5 addition AS the figure. This is not a
+   * magnitude comparison ("does the addition exceed the loss") — it fires on
+   * ANY positive addition against a negative base, transcribed verbatim in
+   * `derive()` in at1-schedule-line-items.ts.
+   */
+  const lossYearFed = {
+    ...fed,
+    bookNetIncome: -20_000,
+    activeBusinessIncome: -20_000,
+    ccaClasses: [],
+  } as never;
+
+  const filedLoss = (ri: Record<string, unknown>) => {
+    const out = runAT1Compute(
+      assembleProvincialInput('AT1', lossYearFed, ri, { isCcpc: true }) as never,
+    );
+    const s12 = out.schedulePayloads?.find((s) => s.scheduleId === '012');
+    return new Map((s12?.values ?? []).map((v) => [v.lineItemId, v.value]));
+  };
+
+  it("matches the report's own exact repro: a $20,000 loss, a $30,000 addition → $30,000 taxable, $2,400 tax", () => {
+    const byId = filedLoss({
+      ...base,
+      albertaSchedule12: { albertaSection110_5Additions: 30_000 },
+    });
+    expect(byId.get('012002001')).toBe(-20_000);
+    expect(byId.get('012082001')).toBe(30_000);
+    // The floor rule: 090 = 082 ALONE, not 054 + 082 (-20,000 + 30,000 = 10,000).
+    expect(byId.get('012090001')).toBe(30_000);
+
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        lossYearFed,
+        { ...base, albertaSchedule12: { albertaSection110_5Additions: 30_000 } },
+        { isCcpc: true },
+      ) as never,
+    );
+    const fieldValue = (line: string) =>
+      (out.fields ?? []).find((f) => String(f.line) === line)?.value;
+    expect(fieldValue('albertaTaxableIncome')).toBe(30_000);
+    expect(fieldValue('amountTaxableInAlberta')).toBe(30_000);
+    expect(fieldValue('albertaTaxPayable')).toBe(2_400);
+  });
+
+  it('the floor rule is binary, not a magnitude comparison — a smaller addition still becomes 090 alone', () => {
+    const byId = filedLoss({
+      ...base,
+      albertaSchedule12: { albertaSection110_5Additions: 5_000 },
+    });
+    // NOT -20,000 + 5,000 = -15,000. The rule fires on any positive addition
+    // against a negative base, regardless of whether it exceeds the loss.
+    expect(byId.get('012090001')).toBe(5_000);
+  });
+
+  it('no addition at all — the loss stays a loss, unfloored, and no tax follows', () => {
+    const byId = filedLoss(base);
+    expect(byId.get('012090001')).toBe(-20_000);
+    const out = runAT1Compute(
+      assembleProvincialInput('AT1', lossYearFed, base, { isCcpc: true }) as never,
+    );
+    const fieldValue = (line: string) =>
+      (out.fields ?? []).find((f) => String(f.line) === line)?.value;
+    // 066 floors a negative 062 at nil — a different line, a different rule.
+    expect(fieldValue('amountTaxableInAlberta')).toBe(0);
+    expect(Number(fieldValue('albertaTaxPayable'))).toBe(0);
+  });
+
+  it('a positive-income year applies the ordinary additive formula, not the floor rule', () => {
+    const without = filed(base);
+    const withAddition = filed({
+      ...base,
+      albertaSchedule12: { albertaSection110_5Additions: 10_000 },
+    });
+    // The shared `fed` fixture nets well above zero, so 054 − 080 is
+    // positive and the addition moves 090 by exactly its own amount —
+    // isolated from the fixture's own deductions rather than assumed nil.
+    expect(Number(without.get('012090001'))).toBeGreaterThan(0);
+    expect(Number(withAddition.get('012090001'))).toBe(Number(without.get('012090001')) + 10_000);
+  });
+});
