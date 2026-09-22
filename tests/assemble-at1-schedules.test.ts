@@ -1832,3 +1832,48 @@ describe('AT1 S13 — the AIIP phase-out reaches the filed figures', () => {
     expect(without.get('013019001')).toBe(10_000);
   });
 });
+
+/**
+ * TF_DEV_BUG_LIST_2026-09-18.md, BUG-113 — reported as "021 as-filed line 001
+ * phantom current-year loss": on a profitable year (positive book income, no
+ * loss inputs), line 001 read $100,000 — equal to the year's income — and the
+ * tester read that as a fabricated loss.
+ *
+ * Does not reproduce as a defect. §3.2.3.21 defines 021001 as "Net Income
+ * (loss) per Alberta Schedule 12 line 054" — an ECHO of net income, not the
+ * current-year loss. It equalling the year's income on a return with no
+ * Schedule 12 adjustments is exactly its job. The actual current-year
+ * NON-CAPITAL LOSS line is 037, several rows further down the same schedule,
+ * and reads a correct nil in the same fact pattern. The report's own
+ * re-sweep already downgraded this to unconfirmed; this test exists so the
+ * two lines' distinct meanings stay pinned against the exact confusion that
+ * produced the report.
+ */
+describe('AT1 S21 — line 001 echoes net income; it is not the current-year loss (BUG-113)', () => {
+  it('a profitable year with no loss inputs: 001 = net income, 037 = nil, no phantom loss added to closing', () => {
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        fed,
+        {
+          ...riWithDivergence,
+          albertaContinuity: {
+            nonCapitalOpening: 50_000,
+            capitalOpening: 0,
+            farmOpening: 0,
+            restrictedFarmOpening: 0,
+          },
+        },
+        { isCcpc: true },
+      ),
+    );
+    const s21 = out.schedulePayloads?.find((p) => p.scheduleId === '021');
+    const byId = new Map((s21?.values ?? []).map((v) => [v.lineItemId, v.value]));
+    const netIncome = byId.get('021001001');
+    expect(typeof netIncome).toBe('number');
+    expect(netIncome).toBeGreaterThan(0);
+    expect(byId.get('021037001')).toBe(0);
+    // The opening balance survives untouched — no loss was created to add to it.
+    expect(byId.get('021049001')).toBe(50_000);
+  });
+});
