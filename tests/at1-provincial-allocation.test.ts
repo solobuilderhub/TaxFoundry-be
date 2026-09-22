@@ -144,3 +144,81 @@ describe('AT1 provincial allocation — an incomplete PE row no longer zeroes th
     expect(allocationFactor(out)).toBe(1);
   });
 });
+
+/**
+ * TF_DEV_BUG_LIST_2026-09-18.md, BUG-112 — reported as "017 totals don't
+ * reconcile to the grid": opening (021) and transfer (051) totals correctly
+ * summed the entered rows, but the closing total (081) stayed $0 with
+ * opening/transfer entered and no closing figure, which the report read as
+ * "the derived closing column never computes."
+ *
+ * Does not reproduce as a defect. Schedule 17's closing balance is NOT a
+ * continuity derivation of opening + transfer — a tax reserve under s.20(1)
+ * is a fresh discretionary claim each year, so a reserve kind's closing
+ * balance is its own independent figure (an entered Alberta override, or the
+ * federal Schedule 13 closing balance by default), never arithmetic on the
+ * other two columns. The report's own repro entered opening and transfer but
+ * no closing figure and no federal Schedule 13 data — $0 is the correct
+ * answer for "no reserve claimed this year," not a computation failure.
+ *
+ * The genuine gap was in the guided editor's copy, which said "the totals …
+ * are computed" without saying they SUM the entered/defaulted rows rather
+ * than deriving closing from the other two columns — fixed separately in
+ * apps/web. This test exists to pin the actual arithmetic so nobody "fixes"
+ * it into a wrong continuity derivation later.
+ */
+describe('AT1 S17 — closing is its own figure, never opening + transfer (BUG-112)', () => {
+  const divergenceDeclared = {
+    ...base,
+    alberta: { reportsDifferentAlbertaIncome: 'no', electsDifferentDiscretionaryAmounts: 'yes' },
+  };
+
+  it("matches the report's own exact repro: two rows, opening/transfer entered, no closing → 081 stays 0, 091 sums the other two", () => {
+    const fedNoReserves = { ...fed, reserveContinuity: [] };
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        fedNoReserves,
+        {
+          ...divergenceDeclared,
+          albertaReserves17: {
+            rows: [
+              { type: 'doubtfulDebts', opening: 10_000, transfer: 5_000 },
+              { type: 'undeliveredGoodsAndServices', opening: 12_000, transfer: 8_000 },
+            ],
+          },
+        },
+        { isCcpc: true },
+      ),
+    );
+    const sch17 = out.schedulePayloads?.find((s) => s.scheduleId === '017');
+    const byId = new Map(sch17?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    expect(byId.get('017021001')).toBe(22_000); // opening total: sums the rows
+    expect(byId.get('017051001')).toBe(13_000); // transfer total: sums the rows
+    // 081 correctly stays 0 — no closing figure and no federal basis exist.
+    expect(byId.get('017081001') ?? 0).toBe(0);
+    expect(byId.get('017091001')).toBe(35_000); // 021 + 051, the one place addition applies
+  });
+
+  it('an entered closing figure files independently, unrelated to opening + transfer', () => {
+    const fedNoReserves = { ...fed, reserveContinuity: [] };
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        fedNoReserves,
+        {
+          ...divergenceDeclared,
+          albertaReserves17: {
+            rows: [{ type: 'doubtfulDebts', opening: 10_000, transfer: 5_000, closing: 999 }],
+          },
+        },
+        { isCcpc: true },
+      ),
+    );
+    const sch17 = out.schedulePayloads?.find((s) => s.scheduleId === '017');
+    const byId = new Map(sch17?.values.map((v) => [v.lineItemId, v.value]) ?? []);
+    // NOT 15,000 (opening + transfer) — the entered figure, exactly.
+    expect(byId.get('017061001')).toBe(999);
+    expect(byId.get('017081001')).toBe(999);
+  });
+});
