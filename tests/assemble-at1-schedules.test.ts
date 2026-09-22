@@ -1877,3 +1877,57 @@ describe('AT1 S21 — line 001 echoes net income; it is not the current-year los
     expect(byId.get('021049001')).toBe(50_000);
   });
 });
+
+/**
+ * TF_DEV_BUG_LIST_2026-09-18.md, BUG-117 — reported as "AB taxable income
+ * goes stale when 125 income is edited while 021 carry-back rows exist":
+ * editing book income from a loss to positive income while non-capital
+ * carry-back rows still existed left the Tax Summary pinned at the OLD
+ * taxable income, surviving a second recompute and a page reload.
+ *
+ * Does not reproduce as staleness. `computeLossCarryback` is pure and
+ * stateless — `currentYearLoss` is derived fresh from `fed.bookNetIncome`
+ * on every single call, so there is nothing in this chain that CAN cache a
+ * superseded figure. What the report's own exact repro actually does, once
+ * this test drives it directly: the current-year loss correctly recomputes
+ * to 0 once income turns positive, and carrying back $45,000 against a loss
+ * that no longer exists correctly REFUSES rather than silently capping the
+ * carry-back or filing a number nobody entered — the same fail-closed
+ * philosophy this codebase applies everywhere else. The server wraps this
+ * as a 400 with the thrown message (`engagement-compute.service.ts`); the
+ * web client's compute handler already surfaces any compute failure via
+ * `toast.error`, and the "stale" banner stays up because `dirty` is never
+ * cleared on a failed compute — both by inspection, not exercised here.
+ *
+ * What was genuinely worth fixing: the thrown message named the two
+ * figures but not WHERE to go fix the state, which is why it read as an
+ * opaque crash rather than a guided next step. See loss-carryback.ts.
+ */
+describe('AT1 S10 — a corrected-to-positive-income year names the fix (BUG-117)', () => {
+  it('income edited from a loss to positive while carry-back rows still exist throws a clear, actionable error', () => {
+    const lossYearFed = { ...fed, bookNetIncome: 300_000, activeBusinessIncome: 300_000 };
+    expect(() =>
+      runAT1Compute(
+        assembleProvincialInput(
+          'AT1',
+          lossYearFed,
+          {
+            ...riWithDivergence,
+            albertaContinuity: {
+              nonCapitalOpening: 0,
+              capitalOpening: 0,
+              farmOpening: 0,
+              restrictedFarmOpening: 0,
+              nonCapitalCarrybacks: [
+                { taxYearEnd: '2023-12-31', amount: 20_000 },
+                { taxYearEnd: '2022-12-31', amount: 15_000 },
+                { taxYearEnd: '2021-12-31', amount: 10_000 },
+              ],
+            },
+          },
+          { isCcpc: true },
+        ),
+      ),
+    ).toThrow(/remove or reduce those rows before recomputing/);
+  });
+});
