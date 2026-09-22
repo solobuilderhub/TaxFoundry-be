@@ -747,6 +747,40 @@ export function at1SilentNilFlags(
     });
   }
 
+  /*
+   * TF_DEV_BUG_LIST_2026-09-18.md, BUG-114 — a permanent establishment row
+   * with a province picked but no revenue or salaries entered.
+   *
+   * Blank cells are not the same as "no row" to the preparer who added it —
+   * they may not have reached the money fields yet, or the PE genuinely has
+   * nil activity this year, but either way the allocation math IGNORES the
+   * row until a figure is entered (it contributes 0 to both totals, so a
+   * corporation whose only OTHER province is the same one it started with
+   * silently reverts to the single-jurisdiction default with no visible
+   * sign anything changed). Fires per row, not once, since each blank row
+   * is its own thing to go back and fill in or remove.
+   */
+  const provincialAllocation = (ri.provincialAllocation ?? {}) as {
+    establishments?: { province?: string; grossRevenue?: number; salariesWages?: number }[];
+  };
+  const blankEstablishments = (provincialAllocation.establishments ?? []).filter(
+    (pe) => pe?.province && !num(pe.grossRevenue) && !num(pe.salariesWages),
+  );
+  if (blankEstablishments.length > 0) {
+    flags.push({
+      severity: 'amber',
+      code: 'AT1_PE_ROW_NO_ALLOCATION_BASIS',
+      message:
+        `Provincial Allocation has ${blankEstablishments.length} permanent establishment ` +
+        `${blankEstablishments.length === 1 ? 'row' : 'rows'} with a province selected but no gross revenue or ` +
+        'salaries and wages entered. A blank row contributes nothing to either allocation base, so it is treated ' +
+        'as though it does not exist — the return files as if it were never added. Enter the figures, or remove ' +
+        'the row if it was added by mistake.',
+      line: '005',
+      resolved: false,
+    });
+  }
+
   // No income basis at all — every federal input schedule empty.
   const albertaTaxableIncome = fold.albertaTaxableIncome ?? 0;
   const is = (ri.incomeStatement ?? {}) as Record<string, unknown>;

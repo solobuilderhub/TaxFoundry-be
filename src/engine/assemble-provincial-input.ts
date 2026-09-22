@@ -32,7 +32,42 @@ interface Pe {
   salariesWages: number;
 }
 
-/** Roll the permanent establishments into Alberta's Schedule 2 allocation bases. */
+/**
+ * Roll the permanent establishments into Alberta's Schedule 2 allocation bases.
+ *
+ * `null` means "fall back to `SINGLE_JURISDICTION_ALBERTA_FACTOR`" (100%) at the
+ * call site — the safe default for a corporation whose PE list carries no usable
+ * allocation basis at all. Returning `null` only for `pes.length === 0` used to
+ * be the whole rule, which missed the identical case one entered-but-blank row
+ * produces: a preparer clicks "Add Item" on the provincial allocation grid,
+ * picks a province, and leaves both money cells empty (has not entered figures
+ * yet, or the row exists only to record a PE with genuinely nil activity this
+ * year). `pes.length` is then 1, not 0, so the old guard let it through — and
+ * `computeAllocationFactor` has no comparable "nothing entered" branch: with
+ * both totals at zero it falls through to `else factor = 0`, a real answer
+ * ("0% of taxable income is Alberta's") this input never asserted. Every
+ * downstream figure — Basic Alberta Tax, the SBD, the amount payable — is
+ * legitimately $0 once fed a $0 base, so nothing past this function was wrong;
+ * the base itself was.
+ *
+ * TF_DEV_BUG_LIST_2026-09-18.md, BUG-114.
+ *
+ * The fix distinguishes two states that both zero the raw totals but are not
+ * the same fact:
+ *
+ *   - every PE is Alberta (one incomplete row, or several, all "AB") — there is
+ *     only one jurisdiction in play, exactly the shape the empty-array case
+ *     already defaults for, so this returns `null` too and gets the same 100%.
+ *   - PEs span MORE than one province and none carries any revenue or payroll —
+ *     a genuinely dormant multi-province year. Defaulting to 100% Alberta here
+ *     would be a real, different answer with no more basis than 0% has; Reg
+ *     402(4)/(5)'s own treatment for that case is an equal split across the
+ *     provinces actually present, which the federal `computeProvincialAllocation`
+ *     already implements (see its own "dormant multi-PE year" branch) — that
+ *     splits a real return correctly; this function still returns `null` for the
+ *     narrower Alberta-only shape rather than duplicating that logic for a case
+ *     this fallback does not need to solve.
+ */
 function albertaAllocationFrom(pes: Pe[]): {
   albertaGrossRevenue: number;
   totalGrossRevenue: number;
@@ -52,6 +87,9 @@ function albertaAllocationFrom(pes: Pe[]): {
       albertaSalaries += num(pe.salariesWages);
     }
   }
+  const noAllocationBasisEntered = totalGrossRevenue === 0 && totalSalaries === 0;
+  const everyPeIsAlberta = pes.every((pe) => pe.province === 'AB');
+  if (noAllocationBasisEntered && everyPeIsAlberta) return null;
   return { albertaGrossRevenue, totalGrossRevenue, albertaSalaries, totalSalaries };
 }
 
