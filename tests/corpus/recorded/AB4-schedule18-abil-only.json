@@ -132,6 +132,7 @@
     "field:amountTaxableInAlberta": 255250,
     "field:basicAlbertaTax": 20420,
     "field:innovationEmploymentGrant": 0,
+    "field:netIncomeForTax": 300000,
     "field:sbdAreaB.aaiiOverThreshold": 0,
     "field:sbdAreaB.baseAmount": 200000,
     "field:sbdAreaB.daysInTaxYear": 366,

@@ -16,6 +16,7 @@
     "field:amountTaxableInAlberta": 300000,
     "field:basicAlbertaTax": 24000,
     "field:innovationEmploymentGrant": 0,
+    "field:netIncomeForTax": 300000,
     "field:totalOwing": 2400000,
     "issue:0": "Alberta SBD: only a CCPC, or an Alberta co-operative or credit union, may claim the small business deduction."
   }

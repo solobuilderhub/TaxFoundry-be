@@ -237,6 +237,20 @@ export function assembleProvincialInput(
       period,
       federalTaxableIncome,
       activeBusinessIncome,
+      /*
+       * Carried through so the review layer can compare it against book net
+       * income (`BIG_BOOK_TAX_DIFF`) — NOT consumed by `computeAlbertaReturn`
+       * itself, which only ever sees `federalTaxableIncome`. Reviews call one
+       * shared check for every program, and that check reads `netIncomeForTax`
+       * off whatever the compute stored; the T2 engine has always emitted it,
+       * the AT1 one never did, so every AT1 review compared book income
+       * against an absent figure defaulting to $0 — a "difference" the size of
+       * the entire return, on every return, however clean the Schedule 1
+       * reconciliation actually was. `at1Engine.validate` is a hand-written
+       * type guard, not a closed schema, so an extra property here survives
+       * untouched to where `at1-compute.ts` re-emits it as a field.
+       */
+      netIncomeForTax: federal.netIncomeForTax,
       // Line 062 stated rather than derived. Forwarded to the ENGINE, not just
       // used locally: `computeAlbertaTax` recomputes 062 from
       // `federalTaxableIncome × allocationFactor` itself, so a figure resolved
@@ -273,6 +287,9 @@ export function assembleProvincialInput(
     period,
     federalTaxableIncome,
     activeBusinessIncome,
+    // See the same field on the AT1 branch above — carried through for the
+    // shared review check, not consumed by `computeQuebecReturn`.
+    netIncomeForTax: federal.netIncomeForTax,
     ...(pes.length > 0 ? { permanentEstablishments: pes } : {}),
     sbdEligible,
     ...(businessLimit > 0 ? { businessLimit } : {}),

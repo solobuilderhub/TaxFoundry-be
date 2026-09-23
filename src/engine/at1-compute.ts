@@ -52,6 +52,20 @@ export function runAT1Compute(input: unknown, actor = 'engine'): EngineComputeOu
   void _rateBook;
   void _taxYear;
 
+  /*
+   * Carried onto the validated input by `assembleProvincialInput` for the
+   * review layer's benefit only — `computeAlbertaReturn` never reads it, so
+   * it is read here rather than stripped like the rate/year fields above.
+   * `evaluateReviewFlags`' book-vs-tax comparison (`BIG_BOOK_TAX_DIFF`) reads
+   * `fold.netIncomeForTax` for every program alike; the federal compute has
+   * always emitted this field, this one never did, so every AT1 review
+   * compared book income against an absent figure that defaulted to $0 — a
+   * false "difference" the size of the whole return, however clean the
+   * actual Schedule 1 reconciliation was.
+   */
+  const netIncomeForTax =
+    typeof safe.netIncomeForTax === 'number' ? safe.netIncomeForTax : undefined;
+
   // Resolved once and both USED and STORED, so the snapshot's rate table is
   // provably the one this return was computed at.
   const rateBook = getAlbertaRateBook();
@@ -77,6 +91,9 @@ export function runAT1Compute(input: unknown, actor = 'engine'): EngineComputeOu
 
   const fields: ProvenancedField[] = [
     { line: 'allocationFactor', value: b.allocationFactor, provenance: 'engine' },
+    ...(netIncomeForTax !== undefined
+      ? [{ line: 'netIncomeForTax', value: netIncomeForTax, provenance: 'engine' as const }]
+      : []),
     /*
      * AT1 line 062 — taxable income on an Alberta basis, BEFORE allocation.
      * `line-labels.ts` used to caption this "Alberta taxable income" with no

@@ -12,6 +12,17 @@ export const CO17_ENGINE_VERSION = 'ca-tax/co17@2024.1';
 
 export function runCo17Compute(input: unknown, actor = 'engine'): EngineComputeOutput {
   const validated = co17Engine.validate(input);
+  /*
+   * Carried onto the validated input by `assembleProvincialInput` for the
+   * review layer only — `computeQuebecReturn` never reads it. See the same
+   * comment in at1-compute.ts: `evaluateReviewFlags`' book-vs-tax comparison
+   * runs for every program, and without this field a CO-17 review compared
+   * book income against an absent figure defaulting to $0.
+   */
+  const netIncomeForTax =
+    typeof (validated as unknown as Record<string, unknown>).netIncomeForTax === 'number'
+      ? (validated as unknown as { netIncomeForTax: number }).netIncomeForTax
+      : undefined;
   // Inject the host's authoritative Québec rate book (see tax-rates.ts).
   const obligation = co17Engine.compute({
     ...validated,
@@ -21,6 +32,9 @@ export function runCo17Compute(input: unknown, actor = 'engine'): EngineComputeO
 
   const fields: ProvenancedField[] = [
     { line: 'allocationFactor', value: b.allocationFactor, provenance: 'engine' },
+    ...(netIncomeForTax !== undefined
+      ? [{ line: 'netIncomeForTax', value: netIncomeForTax, provenance: 'engine' as const }]
+      : []),
     { line: 'quebecTaxableIncome', value: b.quebecTax.quebecTaxableIncome, provenance: 'engine' },
     { line: 'quebecSbdIncome', value: b.quebecTax.quebecSbdIncome, provenance: 'engine' },
     {
