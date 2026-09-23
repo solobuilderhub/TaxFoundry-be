@@ -82,3 +82,62 @@ describe('T2 SBD — the AAII grind, fed the correct line (BUG-101)', () => {
     expect(fold.sbdIncome).toBe(300_000);
   });
 });
+
+/**
+ * TF_DEV_BUG_LIST_2026-09-18.md, BUG-102 — "taxable-capital grind never
+ * applies to the SBD": taxable capital $25M, business limit $500,000 →
+ * report expected a reduced limit of $415,625; observed $500,000 (unground).
+ *
+ * The engine WAS applying the grind — the earlier probe that reproduced an
+ * unground $500,000 had simply used the wrong contract field name (a probe
+ * error, not an engine one: `sbd.taxableCapital`, not an invented `capital`
+ * slice). Fed the correct field, the engine computes $312,500 — which
+ * verifies against the CRA's own T2 jacket worksheet (page 4, "Taxable
+ * capital business limit reduction"), read directly from the vendored form:
+ *
+ *   line 415 = (taxable capital − $10,000,000) × 0.225%
+ *   E = Amount C × line 415 ÷ 90,000
+ *   reduced business limit = C − E  (when E is the greater of the two grinds)
+ *
+ * Expanded algebraically, line 415 ÷ 90,000 × 0.225% reduces to
+ * (taxable capital − $10,000,000) ÷ $40,000,000 — exactly the engine's own
+ * $10M→$50M straight-line band. For $25M capital: line 415 = $33,750,
+ * E = $500,000 × $33,750 ÷ $90,000 = $187,500, reduced limit = $312,500.
+ * Matches this test exactly. The report's own $415,625 does not match the
+ * current law (verified against two independent CRA sources that agree with
+ * each other) or the pre-2019 $10M-$15M range either — it is the report's
+ * own figure that was wrong, not the engine.
+ */
+describe('T2 SBD — the taxable-capital grind, verified against the CRA T2 jacket worksheet (BUG-102)', () => {
+  it('$25M taxable capital reduces a $500,000 limit to $312,500, matching the T2 jacket worksheet exactly', () => {
+    const fold = computeFold({
+      incomeStatement: { revenue: 500_000 },
+      sbd: { activeBusinessIncome: 500_000, corporationStatus: 'ccpc', taxableCapital: 25_000_000 },
+    });
+    expect(fold.sbdIncome).toBe(312_500);
+  });
+
+  it('no taxable capital entered: the grind does not fire', () => {
+    const fold = computeFold({
+      incomeStatement: { revenue: 500_000 },
+      sbd: { activeBusinessIncome: 500_000, corporationStatus: 'ccpc' },
+    });
+    expect(fold.sbdIncome).toBe(500_000);
+  });
+
+  it('taxable capital at exactly $10M (the floor): no reduction', () => {
+    const fold = computeFold({
+      incomeStatement: { revenue: 500_000 },
+      sbd: { activeBusinessIncome: 500_000, corporationStatus: 'ccpc', taxableCapital: 10_000_000 },
+    });
+    expect(fold.sbdIncome).toBe(500_000);
+  });
+
+  it('taxable capital at $50M or above: fully ground to nil', () => {
+    const fold = computeFold({
+      incomeStatement: { revenue: 500_000 },
+      sbd: { activeBusinessIncome: 500_000, corporationStatus: 'ccpc', taxableCapital: 50_000_000 },
+    });
+    expect(fold.sbdIncome).toBe(0);
+  });
+});
