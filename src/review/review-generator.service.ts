@@ -817,10 +817,11 @@ export function at1SilentNilFlags(
       severity: 'amber',
       code: 'AT1_NO_INCOME_BASIS',
       message:
-        'Alberta taxable income (062) is $0 because no federal income figures have been entered, so basic tax (068), the small ' +
-        'business deduction (070) and tax payable (080) are all nil. The AT1 is computed FROM the federal figures — enter the ' +
-        'Income Statement (GIFI 125) and the other federal input schedules in this engagement. They are in the schedule list ' +
-        'under "All"; the "AT1 only" filter hides them.',
+        'Alberta taxable income (062) is $0 because no income has been entered, so basic tax (068), the small business ' +
+        'deduction (070) and tax payable (080) are all nil. Right for a $NIL return (one filed only to claim the Innovation ' +
+        'Employment Grant, say). Otherwise state the income: the federal net income on Schedule 12 line 002, or Alberta ' +
+        'taxable income straight onto the jacket at 062 — or, when the T2 is prepared here, the income statement under ' +
+        '"Federal figures".',
       line: '062',
       resolved: false,
     });

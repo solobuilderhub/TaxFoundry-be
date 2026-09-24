@@ -174,10 +174,15 @@ describe('AT1 silent-nil review flags', () => {
       expect(codes('AT1', {}, { albertaTaxableIncome: 0 })).toContain('AT1_NO_INCOME_BASIS');
     });
 
-    it('points at the federal schedules and at the filter hiding them', () => {
+    it('says where income is stated, on the AT1 itself first', () => {
       const msg = at1SilentNilFlags('AT1', {}, { albertaTaxableIncome: 0 })[0]?.message ?? '';
-      expect(msg).toMatch(/GIFI 125/);
-      expect(msg).toMatch(/AT1 only/);
+      // An AT1 with no T2 here states income on its own forms…
+      expect(msg).toMatch(/Schedule 12 line 002/);
+      expect(msg).toMatch(/062/);
+      // …and a T2 prepared here still feeds it from the federal figures.
+      expect(msg).toMatch(/Federal figures/);
+      // The "All" / "AT1 only" filter it used to name no longer exists.
+      expect(msg).not.toMatch(/AT1 only/);
     });
 
     it('stays quiet once any income figure is entered', () => {

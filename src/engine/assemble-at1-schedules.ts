@@ -722,6 +722,39 @@ function scheduleOne(
 
 // ── Schedule 10 / 21 — loss carry-back and continuity ────────────────────
 
+/** Post-2000 capital gains inclusion rate — what turns a gross capital loss into a net one. */
+const CAPITAL_INCLUSION_RATE = 0.5;
+
+/**
+ * The federal capital-loss pool, restated GROSS for the Alberta schedules.
+ *
+ * Federal carries capital losses NET — the allowable half, as T2 line 332
+ * deducts them. Alberta carries them gross: §3.2.3.21 sets Schedule 21 line
+ * 057 to the Schedule 18 total (or fed 006890 − 006895, both gross), Schedule
+ * 10 line 042 to 057, and Part 1 line 003 to "021061 x Inclusion Rate" — which
+ * only makes sense if 061 is gross.
+ *
+ * Taking the federal pool as-is put a net figure in gross lines: TRA Test
+ * Case 1's $150,000 capital loss read as $75,000, so a carry-back of the
+ * whole loss was refused as larger than the loss; and Schedule 12 multiplied
+ * the already-net applied amount by the inclusion rate again, halving the
+ * Alberta capital-loss deduction and quartering the federal one.
+ *
+ * The current-year loss comes straight from Schedule 6's gross figure where
+ * the federal return has one; the applied amount is grossed up from the net.
+ */
+function federalCapitalGross(federal: FederalT2Result) {
+  const net = federal.losses.netCapital;
+  const s6 = federal.capitalGains;
+  return {
+    ...net,
+    currentYearLoss: s6
+      ? Math.max(0, -s6.netCapitalGain)
+      : Math.round(net.currentYearLoss / CAPITAL_INCLUSION_RATE),
+    appliedCurrentYear: Math.round(net.appliedCurrentYear / CAPITAL_INCLUSION_RATE),
+  };
+}
+
 /**
  * Schedule 10 has two columns: non-capital reuses the federal carry-back
  * request verbatim (same engine, same figures — federal T2 has no separate
@@ -741,7 +774,18 @@ function scheduleOne(
  * shared column's current-year-loss is the SUM of both pools' own current-
  * year losses (021097 + 021117).
  */
-function scheduleTen(federal: FederalT2Result, ri: Ri, taxYearStart?: unknown) {
+function scheduleTen(
+  federal: FederalT2Result,
+  ri: Ri,
+  taxYearStart?: unknown,
+  /**
+   * AT1 Schedule 21 line 037 — Alberta's own current-year non-capital loss,
+   * when Schedule 21 is filed. §3.2.3.11: "If the corporation has a value at
+   * 021037 and chooses to carry the loss back to a prior year, Value =
+   * 021037. Otherwise, if form 021 does not exist, value = fed 004110."
+   */
+  albertaNonCapitalLoss?: number,
+) {
   const c: AlbertaContinuityValues = ri.albertaContinuity ?? {};
 
   type CarrybackField =
@@ -811,16 +855,32 @@ function scheduleTen(federal: FederalT2Result, ri: Ri, taxYearStart?: unknown) {
    * figure the preparer states is a better authority than one derived from a
    * return this app may not hold.
    */
+  /*
+   * Line 002 is Schedule 21's 037 whenever Schedule 21 is filed — the loss
+   * the Alberta return itself computes. It was the federal loss (or a typed
+   * override), so a return whose Alberta loss differed from the federal one
+   * filed 002 against a 037 it contradicted: TRA Test Case 1 has a federal
+   * loss of $19,800 and an Alberta loss of $25,000.
+   *
+   * With no Schedule 21, the typed figure and then the federal one stand in,
+   * as the specification's "if form 021 does not exist" clause allows.
+   * A federal carry-back request, where no Alberta rows were entered, is
+   * re-applied against the Alberta loss rather than filed with the federal one.
+   */
+  const nonCapitalAvailable =
+    albertaNonCapitalLoss ??
+    (present(c.nonCapitalCurrentYearLoss)
+      ? num(c.nonCapitalCurrentYearLoss)
+      : federal.losses.nonCapital.currentYearLoss);
   const nonCapitalCarrybackRows = rowsFrom('nonCapitalCarrybacks');
-  const nonCapital =
+  const nonCapitalRows =
     nonCapitalCarrybackRows.length > 0
-      ? computeLossCarryback({
-          currentYearLoss: present(c.nonCapitalCurrentYearLoss)
-            ? num(c.nonCapitalCurrentYearLoss)
-            : federal.losses.nonCapital.currentYearLoss,
-          carrybacks: nonCapitalCarrybackRows,
-        })
-      : federal.lossCarryback;
+      ? nonCapitalCarrybackRows
+      : (federal.lossCarryback?.carrybacks ?? []);
+  const nonCapital =
+    nonCapitalRows.length > 0
+      ? computeLossCarryback({ currentYearLoss: nonCapitalAvailable, carrybacks: nonCapitalRows })
+      : undefined;
 
   const capitalCarrybackRows = rowsFrom('capitalCarrybacks');
   const capital =
@@ -829,7 +889,7 @@ function scheduleTen(federal: FederalT2Result, ri: Ri, taxYearStart?: unknown) {
           // Same figure as federal (TRA), but typed when there is no T2 here to take it from.
           currentYearLoss: present(c.capitalCurrentYearLoss)
             ? num(c.capitalCurrentYearLoss)
-            : federal.losses.netCapital.currentYearLoss,
+            : federalCapitalGross(federal).currentYearLoss,
           carrybacks: capitalCarrybackRows,
         })
       : undefined;
@@ -907,6 +967,7 @@ function scheduleTen(federal: FederalT2Result, ri: Ri, taxYearStart?: unknown) {
     ...(capital ? { capital } : {}),
     precedingYearEnds,
     // Schedule 21 override inputs — see the split note above.
+    ...(nonCapital ? { nonCapitalCarriedBack: nonCapital.totalCarriedBack } : {}),
     ...(farm ? { farmCarriedBack: farm.totalCarriedBack } : {}),
     ...(restrictedFarmCarriedBack !== undefined ? { restrictedFarmCarriedBack } : {}),
     ...(lppCarriedBack !== undefined ? { lppCarriedBack } : {}),
@@ -952,6 +1013,12 @@ function scheduleTwentyOne(
   farmCarriedBack?: number,
   restrictedFarmCarriedBack?: number,
   lppCarriedBack?: number,
+  /**
+   * Schedule 10's non-capital column total — line 047 must be the Alberta
+   * request, not federal Schedule 4's. The two differ whenever the Alberta
+   * loss does, and with no T2 in this app the federal figure is nil.
+   */
+  nonCapitalCarriedBack?: number,
 ) {
   const c = ri.albertaContinuity;
   if (!c) return undefined; // no Alberta loss history entered ⇒ nothing to file
@@ -1020,8 +1087,8 @@ function scheduleTwentyOne(
   const capital = carryForward(
     num(c.capitalOpening),
     capitalCarriedBack !== undefined
-      ? { ...federal.losses.netCapital, carriedBack: capitalCarriedBack }
-      : federal.losses.netCapital,
+      ? { ...federalCapitalGross(federal), carriedBack: capitalCarriedBack }
+      : federalCapitalGross(federal),
     // The same figure Schedule 10's capital column draws on — one entry, both schedules.
     present(c.capitalCurrentYearLoss) ? num(c.capitalCurrentYearLoss) : undefined,
     {
@@ -1126,7 +1193,9 @@ function scheduleTwentyOne(
 
   const nonCapital = carryForward(
     num(c.nonCapitalOpening),
-    federal.losses.nonCapital,
+    nonCapitalCarriedBack !== undefined
+      ? { ...federal.losses.nonCapital, carriedBack: nonCapitalCarriedBack }
+      : federal.losses.nonCapital,
     currentYearLoss.currentYearLoss,
     {
       applied: c.nonCapitalApplied,
@@ -1692,7 +1761,8 @@ function scheduleTwelve(
       },
       {
         nonCapital: federal.losses.nonCapital,
-        capital: federal.losses.netCapital,
+        // Gross, like the Alberta pool beside it — the helper applies the rate.
+        capital: federalCapitalGross(federal),
         restrictedFarm: federal.losses.restrictedFarm,
         farm: federal.losses.farm,
       },
@@ -2101,7 +2171,6 @@ export function assembleAt1Schedules(
   const cca = scheduleThirteen(fed, ab, ri);
   const reserves = scheduleSeventeen(fed, ri, ab);
   const dispositions = scheduleEighteen(fed, ab, ri);
-  const lossCarryback = scheduleTen(federal, ri, fed.period?.start);
 
   // Nine standalone Alberta-only credit/deduction schedules — none are
   // reconciliation overlays like 13/17/18, so none read `ab`'s divergence
@@ -2137,6 +2206,16 @@ export function assembleAt1Schedules(
     schedule12SredPair(scientificResearch),
   );
 
+  /*
+   * Schedule 10 files Schedule 21's own current-year loss (037) as its
+   * non-capital line 002, and Schedule 21 files Schedule 10's carry-back
+   * totals. Not a cycle: 037 is Part 1 of Schedule 21, which reads nothing
+   * Schedule 10 produces, so a first pass without the carry-backs yields it.
+   */
+  const albertaNonCapitalLoss = scheduleTwentyOne(federal, ri, schedule12Result)?.nonCapital
+    .currentYearLoss;
+  const lossCarryback = scheduleTen(federal, ri, fed.period?.start, albertaNonCapitalLoss);
+
   const losses = scheduleTwentyOne(
     federal,
     ri,
@@ -2145,6 +2224,7 @@ export function assembleAt1Schedules(
     lossCarryback?.farmCarriedBack,
     lossCarryback?.restrictedFarmCarriedBack,
     lossCarryback?.lppCarriedBack,
+    lossCarryback?.nonCapitalCarriedBack,
   );
   const donations = scheduleTwenty(fed, ri, schedule12Result);
 

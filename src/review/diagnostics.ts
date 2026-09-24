@@ -129,11 +129,17 @@ export const DIAGNOSTIC_RULES: DiagnosticRule[] = [
   },
 
   // ── Financial statements (GIFI) ────────────────────────────────────────────
+  //
+  // Not on an AT1. GIFI is filed with the T2; the AT1 Net File has no place
+  // for it, and the two figures the AT1 takes from the statements — gross
+  // revenue and total assets (047/048) — are typed on its own jacket, where the
+  // jacket's mandatory-field check already names them. On an AT1 with no T2 in
+  // this app these fired on every return and pointed at nothing to fix.
   {
     code: 'D_INCOME_STATEMENT_REQUIRED',
     line: 'GIFI 125',
     severity: 'amber',
-    when: (c) => !isInactive(c) && !anyValue(rec(c.ri.incomeStatement)),
+    when: (c) => c.program !== 'AT1' && !isInactive(c) && !anyValue(rec(c.ri.incomeStatement)),
     message:
       'No income statement entered (GIFI 125) — enter the financials or mark the return inactive.',
   },
@@ -141,7 +147,7 @@ export const DIAGNOSTIC_RULES: DiagnosticRule[] = [
     code: 'D_BALANCE_SHEET_REQUIRED',
     line: 'GIFI 100',
     severity: 'amber',
-    when: (c) => !isInactive(c) && !anyValue(rec(c.ri.balanceSheet)),
+    when: (c) => c.program !== 'AT1' && !isInactive(c) && !anyValue(rec(c.ri.balanceSheet)),
     message: 'No balance sheet entered (GIFI 100) — a T2 return requires the GIFI balance sheet.',
   },
 

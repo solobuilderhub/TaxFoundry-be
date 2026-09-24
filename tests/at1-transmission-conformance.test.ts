@@ -974,13 +974,13 @@ describe('AT1 Schedule 10 — the non-capital carry-back', () => {
   it('files the non-capital column from Alberta-side rows with no federal return', () => {
     const sent = sentUnder(
       at1Only({
+        // The loss the request is drawn from, stated where an AT1 without a T2
+        // states it: the federal net income on Schedule 12 (line 002). Schedule
+        // 21 derives its current-year loss (037) from that, and Schedule 10
+        // files 037 at its line 002 (§3.2.3.11).
+        albertaSchedule12: { federalNetIncomeForTax: -12_000 },
         albertaContinuity: {
           nonCapitalOpening: 50_000,
-          // The loss the request is drawn from. Without it the engine refuses
-          // the carry-back — correctly, since with no federal return the
-          // current-year loss reads nil and a request larger than the loss is
-          // not one TRA can accept.
-          nonCapitalCurrentYearLoss: 12_000,
           nonCapitalCarrybacks: [{ taxYearEnd: '2023-12-31', amount: 9_500 }],
         },
       }),

@@ -1952,7 +1952,6 @@ describe('AT1 S10 — a carry-back files on the row it was entered on', () => {
             capitalOpening: 0,
             farmOpening: 0,
             restrictedFarmOpening: 0,
-            nonCapitalCurrentYearLoss: 50_000,
             ...albertaContinuity,
           },
         },
@@ -1977,7 +1976,9 @@ describe('AT1 S10 — a carry-back files on the row it was entered on', () => {
     expect(v['008']).toBeUndefined();
     expect(v['003']).toBe('2024-12-31');
     expect(v['005']).toBe('2023-12-31');
-    expect(v['010']).toBe(38_000);
+    // 002 is Schedule 21's own current-year loss (§3.2.3.11) — the balance is
+    // what is left of it after the one 12,000 row.
+    expect(v['010']).toBe(Number(v['002']) - 12_000);
   });
 
   it('a row with no date anywhere files the preceding year end, never blank', () => {
