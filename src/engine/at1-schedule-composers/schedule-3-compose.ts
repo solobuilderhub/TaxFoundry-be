@@ -58,8 +58,42 @@ const present = (v: unknown): boolean => v != null && v !== '';
  */
 const buildSchedule3Credits = (c: Omit<Schedule3Input, 'mad'>): Omit<Schedule3Input, 'mad'> => c;
 
+/**
+ * APITC available at the beginning of the year, by vintage — read off page 3's
+ * year-of-origin table, line 335, where the printed form collects it: row 1
+ * is the 1st preceding year, row 2 the 2nd, and rows 3-10 are what page 1's
+ * line 310 draws on together.
+ *
+ * Page 1 used to take these as three separate entries, collected in the guided
+ * view only, beside a page-3 table asking for the same figures — two places to
+ * state one balance, free to disagree. The table — the one the form shows —
+ * wins; a figure in the old fields is used only where the table is blank, so a
+ * return prepared that way still computes as before.
+ */
+function apitcAvailableFromTable(s3: AlbertaOtherCredits3Values) {
+  const rows = s3.vintages?.agriProcessingTaxCredit ?? [];
+  const sum = (from: number, to: number): number | undefined => {
+    const hits = rows.filter(
+      (r) =>
+        r?.yearIndex !== undefined &&
+        r.yearIndex >= from &&
+        r.yearIndex <= to &&
+        present(r.openingBalance),
+    );
+    return hits.length === 0 ? undefined : hits.reduce((s, r) => s + num(r.openingBalance), 0);
+  };
+  const pick = (entered: unknown, fromTable: number | undefined) =>
+    fromTable ?? (present(entered) ? num(entered) : undefined);
+  return {
+    first: pick(s3.apitcFirstAvailable, sum(1, 1)),
+    second: pick(s3.apitcSecondAvailable, sum(2, 2)),
+    thirdToTenth: pick(s3.apitcThirdToTenthAvailable, sum(3, 10)),
+  };
+}
+
 export function assembleSchedule3(ri: ReturnInput): Omit<Schedule3Input, 'mad'> | undefined {
   const s3: AlbertaOtherCredits3Values = ri.albertaOtherCredits3 ?? {};
+  const available = apitcAvailableFromTable(s3);
 
   const hasItc =
     present(s3.itcCertificatesIssued) ||
@@ -71,9 +105,9 @@ export function assembleSchedule3(ri: ReturnInput): Omit<Schedule3Input, 'mad'> 
     present(s3.citcAmountApplied);
   const hasApitc =
     present(s3.apitcCurrentReceived) ||
-    present(s3.apitcFirstAvailable) ||
-    present(s3.apitcSecondAvailable) ||
-    present(s3.apitcThirdToTenthAvailable);
+    available.first !== undefined ||
+    available.second !== undefined ||
+    available.thirdToTenth !== undefined;
 
   if (!hasItc && !hasCitc && !hasApitc) return undefined; // nothing to file
 
@@ -129,19 +163,19 @@ export function assembleSchedule3(ri: ReturnInput): Omit<Schedule3Input, 'mad'> 
                 : {}),
             },
             firstPreceding: {
-              availableAtBeginning: num(s3.apitcFirstAvailable),
+              availableAtBeginning: available.first ?? 0,
               ...(present(s3.apitcFirstApplied)
                 ? { amountApplied: num(s3.apitcFirstApplied) }
                 : {}),
             },
             secondPreceding: {
-              availableAtBeginning: num(s3.apitcSecondAvailable),
+              availableAtBeginning: available.second ?? 0,
               ...(present(s3.apitcSecondApplied)
                 ? { amountApplied: num(s3.apitcSecondApplied) }
                 : {}),
             },
             thirdToTenthPreceding: {
-              availableAtBeginning: num(s3.apitcThirdToTenthAvailable),
+              availableAtBeginning: available.thirdToTenth ?? 0,
               ...(present(s3.apitcThirdToTenthApplied)
                 ? { amountApplied: num(s3.apitcThirdToTenthApplied) }
                 : {}),

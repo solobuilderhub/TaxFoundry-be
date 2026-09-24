@@ -25,6 +25,7 @@ import {
 } from '../../../engine/companion-filing.service.js';
 import {
   computeEngagementT2,
+  previewEngagement,
   verifyEngagementReproducible,
 } from '../../../engine/engagement-compute.service.js';
 import { assertReturnInputShape } from '../../../engine/return-input-validation.js';
@@ -83,7 +84,47 @@ const engagementYearResource = defineResource<EngagementYearDocument>({
           { _id: id, organizationId: orgId },
           { returnInput },
         );
-        return { ok: true };
+        /*
+         * Live recalculation: every save returns the figures the engine gets
+         * from the return as saved, so the forms fill in as the preparer types
+         * — nothing recorded (see `previewEngagement`). A return the engine
+         * cannot compute yet still saves; the reason comes back instead.
+         */
+        try {
+          const preview = await previewEngagement({
+            engagementId: id,
+            orgId,
+            userId: getUserId(req.scope) ?? 'engine',
+            returnInput,
+          });
+          return { ok: true, preview };
+        } catch (err) {
+          return { ok: true, previewError: (err as Error).message };
+        }
+      },
+    },
+    preview: {
+      description:
+        'Live figures for the saved working return — runs the real engine, records nothing (no computed return, fact or review)',
+      handler: async (id, _data, req) => {
+        const orgId = getOrgId(req.scope);
+        if (!orgId) throw createError(403, 'Organization context required');
+        const engagement = (await engagementYearRepository.getOne({
+          _id: id,
+          organizationId: orgId,
+        })) as WithId<EngagementYearDocument> | null;
+        if (!engagement) throw createError(404, 'Engagement year not found');
+        try {
+          const preview = await previewEngagement({
+            engagementId: id,
+            orgId,
+            userId: getUserId(req.scope) ?? 'engine',
+            returnInput: (engagement.returnInput ?? {}) as Record<string, unknown>,
+          });
+          return { ok: true, preview };
+        } catch (err) {
+          return { ok: true, previewError: (err as Error).message };
+        }
       },
     },
     'preview-cca': {

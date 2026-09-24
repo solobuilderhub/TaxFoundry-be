@@ -23,6 +23,7 @@ import { ProvenanceViolationError } from '#shared/provenance-guard.js';
 import { runReview } from '../review/review-generator.service.js';
 import { assembleProvincialInput } from './assemble-provincial-input.js';
 import { assembleT2Input } from './assemble-t2-input.js';
+import { type At1Identity, effectiveAt1Identity } from './at1-identity.js';
 import { runEngagementCompute } from './compute.js';
 import type { EngineComputeOutput } from './compute-types.js';
 import { applyPriorOpenings, resolvePriorYearOpenings } from './prior-year-openings.service.js';
@@ -113,6 +114,36 @@ function applyAuthoritativeIdentity(input: unknown, facts: { isCcpc: boolean }):
 }
 
 /**
+ * The frozen identity with the AT1 jacket's own identification entries applied.
+ *
+ * The filing path reads identity from this snapshot only, so this is where a
+ * value typed on the jacket becomes the value that files. Blank jacket boxes
+ * keep the client's value — see `effectiveAt1Identity`.
+ */
+export function withAt1JacketIdentity(
+  frozen: Record<string, unknown>,
+  client: At1Identity | null,
+  returnInput: unknown,
+): Record<string, unknown> {
+  const eff = effectiveAt1Identity(client, returnInput as Record<string, unknown> | undefined);
+  return {
+    ...frozen,
+    ...(eff.name !== undefined ? { legalName: eff.name } : {}),
+    ...(eff.operatingName !== undefined ? { operatingName: eff.operatingName } : {}),
+    ...(eff.businessNumber !== undefined ? { businessNumber: eff.businessNumber } : {}),
+    ...(eff.corporateAccountNumber !== undefined
+      ? { corporateAccountNumber: eff.corporateAccountNumber }
+      : {}),
+    ...(eff.address !== undefined ? { address: eff.address } : {}),
+    ...(eff.contactPerson !== undefined ? { contactPerson: eff.contactPerson } : {}),
+    ...(eff.contactTelephone !== undefined ? { contactTelephone: eff.contactTelephone } : {}),
+    ...(eff.natureOfBusiness !== undefined ? { natureOfBusiness: eff.natureOfBusiness } : {}),
+    ...(eff.typeOfCorporation !== undefined ? { typeOfCorporation: eff.typeOfCorporation } : {}),
+    ...(eff.authorizedEmail !== undefined ? { authorizedEmail: eff.authorizedEmail } : {}),
+  };
+}
+
+/**
  * Reproducibility check for the latest computed return: recompute from the stored
  * snapshot's validated input and confirm it still hashes to the recorded result.
  * Proves a filed return can be regenerated — the reviewer's reproducibility gap.
@@ -137,6 +168,106 @@ export async function verifyEngagementReproducible(params: {
 
   const { reproducible, expected, actual } = verifyT2Reproducible(snapshot);
   return { reproducible, expected, actual, engineVersion: computed.engineVersion };
+}
+
+/**
+ * Assemble the engine input and run the engine — the part compute and preview
+ * share, so a previewed figure is the figure compute will record.
+ */
+async function runEngine(p: {
+  engagement: WithId<EngagementYearDocument>;
+  isCcpc: boolean;
+  structuredReturn: Record<string, unknown> | null;
+  /** Legacy engine-shaped payload, used only when there is no structured return. */
+  legacyInput?: unknown;
+  orgId: string;
+  userId: string;
+}): Promise<EngineComputeOutput> {
+  const { engagement, isCcpc, structuredReturn } = p;
+  const assembledInput = structuredReturn
+    ? assembleT2Input(structuredReturn, engagement)
+    : coerceEngineInput(p.legacyInput); // legacy engine-input path
+
+  // Multi-year continuity: carry the prior tax year's closing loss/RDTOH pools
+  // in as this year's opening balances (a preparer's explicit opening wins).
+  const priors = await resolvePriorYearOpenings({ engagement, orgId: p.orgId });
+  const federalInput = applyAuthoritativeIdentity(
+    applyPriorOpenings(coerceEngineInput(assembledInput), priors),
+    { isCcpc },
+  );
+
+  // A provincial engagement (Alberta AT1 / Québec CO-17) taxes the FEDERAL taxable
+  // income allocated to the province, so compose its engine input from the federal
+  // one (one source). A legacy engine-shaped payload for a provincial program is
+  // passed straight through — the caller already sent the provincial shape.
+  const isProvincial = engagement.program === 'AT1' || engagement.program === 'CO17';
+
+  try {
+    // Inside the try: composing the provincial input can refuse (an Area B
+    // allocation with a blank line, say), and that is the preparer's to fix —
+    // a 400 naming the line, not a 500.
+    const engineInput =
+      isProvincial && structuredReturn
+        ? assembleProvincialInput(engagement.program, federalInput, structuredReturn, { isCcpc })
+        : federalInput;
+    return runEngagementCompute(engagement.program, engineInput, p.userId);
+  } catch (err) {
+    if (err instanceof ProvenanceViolationError) throw createError(422, err.message);
+    throw createError(400, (err as Error).message);
+  }
+}
+
+/** What a live preview returns — the same shape the Form Views read from a computed return. */
+export interface EngagementPreview {
+  fields: { line: string; value: unknown; provenance: string }[];
+  schedulePayloads?: unknown[];
+  issues?: string[];
+  totals: { totalOwing: number };
+}
+
+/**
+ * Live recalculation: run the engine on a working return WITHOUT recording it.
+ *
+ * No computed return, no fact, no status change, no review — so a preview can
+ * never stand in for a reviewed computation or invalidate a T183. The figures
+ * come from `runEngine`, the same path compute uses, so what the preparer sees
+ * while typing is exactly what Compute will record.
+ */
+export async function previewEngagement(params: {
+  engagementId: string;
+  orgId: string;
+  userId: string;
+  returnInput: Record<string, unknown>;
+}): Promise<EngagementPreview> {
+  const engagement = (await engagementYearRepository.getOne({
+    _id: params.engagementId,
+    organizationId: params.orgId,
+  })) as WithId<EngagementYearDocument> | null;
+  if (!engagement) throw createError(404, 'Engagement year not found');
+  const client = (await clientRepository.getOne({
+    _id: engagement.clientId,
+    organizationId: params.orgId,
+  })) as { corpType?: string } | null;
+  if (!client)
+    throw createError(
+      409,
+      'Client for this engagement could not be loaded — cannot determine corporation type',
+    );
+  const isCcpc = (client.corpType ?? '').toUpperCase().includes('CCPC');
+
+  const out = await runEngine({
+    engagement,
+    isCcpc,
+    structuredReturn: params.returnInput,
+    orgId: params.orgId,
+    userId: params.userId,
+  });
+  return {
+    fields: out.fields.map((f) => ({ line: f.line, value: f.value, provenance: f.provenance })),
+    ...(out.schedulePayloads ? { schedulePayloads: out.schedulePayloads as unknown[] } : {}),
+    ...(out.issues && out.issues.length > 0 ? { issues: out.issues } : {}),
+    totals: { totalOwing: out.obligation.totalOwing },
+  };
 }
 
 export async function computeEngagementT2(
@@ -214,42 +345,21 @@ export async function computeEngagementT2(
       throw createError(400, `Malformed return input: ${(err as Error).message}`);
     }
   }
-  let assembledInput: unknown;
   if (structuredReturn) {
     await engagementYearRepository.update(String(engagement._id), {
       returnInput: structuredReturn,
     });
     engagement.returnInput = structuredReturn as EngagementYearDocument['returnInput'];
-    assembledInput = assembleT2Input(structuredReturn, engagement);
-  } else {
-    assembledInput = coerceEngineInput(params.input); // legacy engine-input path
   }
 
-  // Multi-year continuity: carry the prior tax year's closing loss/RDTOH pools
-  // in as this year's opening balances (a preparer's explicit opening wins).
-  const priors = await resolvePriorYearOpenings({ engagement, orgId: params.orgId });
-  const federalInput = applyAuthoritativeIdentity(
-    applyPriorOpenings(coerceEngineInput(assembledInput), priors),
-    { isCcpc },
-  );
-
-  // A provincial engagement (Alberta AT1 / Québec CO-17) taxes the FEDERAL taxable
-  // income allocated to the province, so compose its engine input from the federal
-  // one (one source). A legacy engine-shaped payload for a provincial program is
-  // passed straight through — the caller already sent the provincial shape.
-  const isProvincial = engagement.program === 'AT1' || engagement.program === 'CO17';
-  const engineInput =
-    isProvincial && structuredReturn
-      ? assembleProvincialInput(engagement.program, federalInput, structuredReturn, { isCcpc })
-      : federalInput;
-
-  let out: EngineComputeOutput;
-  try {
-    out = runEngagementCompute(engagement.program, engineInput, params.userId);
-  } catch (err) {
-    if (err instanceof ProvenanceViolationError) throw createError(422, err.message);
-    throw createError(400, (err as Error).message);
-  }
+  const out = await runEngine({
+    engagement,
+    isCcpc,
+    structuredReturn,
+    legacyInput: params.input,
+    orgId: params.orgId,
+    userId: params.userId,
+  });
 
   // Persist the three ledger writes ATOMICALLY: the computed-return snapshot, the
   // append-only fact (with an atomic per-engagement sequence — no count()+1 race),
@@ -279,7 +389,10 @@ export async function computeEngagementT2(
           })),
           totals: { totalOwing: out.obligation.totalOwing },
           ...(frozenFilingInput !== undefined ? { filingInput: frozenFilingInput } : {}),
-          identity: frozenIdentity,
+          identity:
+            engagement.program === 'AT1'
+              ? withAt1JacketIdentity(frozenIdentity, client, engagement.returnInput)
+              : frozenIdentity,
           ...(out.schedulePayloads ? { schedulePayloads: out.schedulePayloads } : {}),
           ...(out.issues && out.issues.length > 0 ? { issues: out.issues } : {}),
           // Fileable only when a T2 was computed from the server-assembled structured

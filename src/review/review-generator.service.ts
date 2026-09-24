@@ -23,6 +23,7 @@ import type { ReviewMemoDocument } from '#resources/workpapers/review-memo/revie
 import reviewMemoRepository from '#resources/workpapers/review-memo/review-memo.repository.js';
 import { appendFact } from '#shared/append-fact.js';
 import type { WithId } from '#shared/db.js';
+import { type At1Identity, effectiveAt1Identity } from '../engine/at1-identity.js';
 import type { ReturnInput } from '../engine/contracts/return-input.js';
 import { getAlbertaRateBook, getFederalRateBook, getQuebecRateBook } from '../engine/tax-rates.js';
 import { runDiagnostics } from './diagnostics.js';
@@ -550,9 +551,9 @@ export function at1ClientIdentityFlags(
       severity: 'red' as Severity,
       code: 'AT1_CLIENT_IDENTITY_INCOMPLETE',
       message:
-        `The client record is missing ${missing.length} field(s) Alberta requires: ` +
-        `${missing.join(', ')}. Add them on the client, then recompute — the Net File ` +
-        'payload cannot be generated without them.',
+        `The AT1 jacket is missing ${missing.length} identification field(s) Alberta requires: ` +
+        `${missing.join(', ')}. Enter them on the AT1 Jacket (Schedule 000), then recompute — ` +
+        'the Net File payload cannot be generated without them.',
       resolved: false,
     });
   }
@@ -561,10 +562,10 @@ export function at1ClientIdentityFlags(
       severity: 'red' as Severity,
       code: 'AT1_CLIENT_IDENTITY_MALFORMED',
       message:
-        `The client record has ${malformed.length} field(s) Alberta will reject: ` +
+        `The AT1 jacket has ${malformed.length} identification field(s) Alberta will reject: ` +
         `${malformed.join('; ')}. These are transmitted exactly as entered, so TRA ` +
-        'rejects the return rather than interpreting them. Correct them on the client, ' +
-        'then recompute.',
+        'rejects the return rather than interpreting them. Correct them on the AT1 Jacket ' +
+        '(Schedule 000), then recompute.',
       resolved: false,
     });
   }
@@ -647,6 +648,27 @@ export function at1SilentNilFlags(
         'Basic tax, the small business deduction and tax payable all follow from it, so the figure carries the whole ' +
         'Alberta tax calculation — check it against the federal return it came from before signing off.',
       line: '062',
+      resolved: false,
+    });
+  }
+
+  /*
+   * Schedule 2 typed with an Alberta figure larger than the all-jurisdiction
+   * total. The factor then exceeds 1 and Alberta taxes more than the whole
+   * of taxable income — never a real allocation, always a transposed pair.
+   */
+  const over = (part: unknown, whole: unknown) => part != null && num(part) > num(whole);
+  if (
+    over(ab.allocationAlbertaSalaries, ab.allocationTotalSalaries) ||
+    over(ab.allocationAlbertaRevenue, ab.allocationTotalRevenue)
+  ) {
+    flags.push({
+      severity: 'red',
+      code: 'AT1_ALLOCATION_EXCEEDS_TOTAL',
+      message:
+        'Schedule 2 states more Alberta salaries or revenue than the total for all jurisdictions, so the ' +
+        'allocation factor is above 100%. Check lines 002/004 and 006/008 — the Alberta amount is part of the total.',
+      line: '065',
       resolved: false,
     });
   }
@@ -940,7 +962,10 @@ export async function runReview(params: {
     // the client record and cannot be derived from the return, so a preparer who
     // only learns of them when generating the payload has already filled in the
     // whole return. The renderer still refuses — this just says so earlier.
-    ...at1ClientIdentityFlags(String(engagement.program), client),
+    ...at1ClientIdentityFlags(
+      String(engagement.program),
+      effectiveAt1Identity(client as At1Identity | null, ri) as Record<string, unknown>,
+    ),
     ...at1BalanceFormulaFlags(String(engagement.program), fold),
     // A claim that computes to nothing, said out loud. See the doc comment —
     // the defect is the silence, not the arithmetic.

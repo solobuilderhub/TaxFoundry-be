@@ -368,10 +368,16 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
      */
     softwareCertCode: transmitter.softwareCertCode,
     legalName: String(frozen?.legalName ?? live(src.client.name) ?? ''),
+    // 011/013/016 are typed on the jacket only — no client-record fallback.
+    ...(str(frozen?.operatingName) !== undefined
+      ? { operatingName: str(frozen?.operatingName) }
+      : {}),
     address: {
       street: String(frozenAddr.street ?? live(src.client.address?.street) ?? ''),
+      ...(str(frozenAddr.line2) !== undefined ? { line2: str(frozenAddr.line2) } : {}),
       city: String(frozenAddr.city ?? live(src.client.address?.city) ?? ''),
       province: String(frozenAddr.province ?? live(src.client.address?.province) ?? 'AB'),
+      ...(str(frozenAddr.country) !== undefined ? { country: str(frozenAddr.country) } : {}),
       postalCode: String(frozenAddr.postalCode ?? live(src.client.address?.postalCode) ?? ''),
     },
     corporateAccountNumber: String(

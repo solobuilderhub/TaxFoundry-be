@@ -1931,3 +1931,77 @@ describe('AT1 S10 — a corrected-to-positive-income year names the fix (BUG-117
     ).toThrow(/remove or reduce those rows before recomputing/);
   });
 });
+
+/**
+ * Schedule 10's rows are fixed positions: 004/006/008 are the 1st/2nd/3rd
+ * preceding years, and the date on each row (003/005/007) is shared by every
+ * column. Blank rows used to be filtered out before mapping, so an amount
+ * entered only against the 2nd preceding year filed as the 1st.
+ */
+describe('AT1 S10 — a carry-back files on the row it was entered on', () => {
+  const s10For = (albertaContinuity: Record<string, unknown>) => {
+    const lossFed = { ...fed, bookNetIncome: -50_000, activeBusinessIncome: -50_000 };
+    const out = runAT1Compute(
+      assembleProvincialInput(
+        'AT1',
+        lossFed,
+        {
+          ...riWithDivergence,
+          albertaContinuity: {
+            nonCapitalOpening: 0,
+            capitalOpening: 0,
+            farmOpening: 0,
+            restrictedFarmOpening: 0,
+            nonCapitalCurrentYearLoss: 50_000,
+            ...albertaContinuity,
+          },
+        },
+        { isCcpc: true },
+      ),
+    );
+    const s10 = (out.schedulePayloads ?? []).find((p) => p.scheduleId === '010');
+    return Object.fromEntries(
+      (s10?.values ?? []).map((v) => [v.lineItemId.slice(3, 6), v.value]),
+    ) as Record<string, unknown>;
+  };
+
+  it('an amount on the 2nd preceding year only files at 006, with 004 nil', () => {
+    const v = s10For({
+      nonCapitalCarrybacks: [
+        { taxYearEnd: '2024-12-31' },
+        { taxYearEnd: '2023-12-31', amount: 12_000 },
+      ],
+    });
+    expect(v['004']).toBe(0);
+    expect(v['006']).toBe(12_000);
+    expect(v['008']).toBeUndefined();
+    expect(v['003']).toBe('2024-12-31');
+    expect(v['005']).toBe('2023-12-31');
+    expect(v['010']).toBe(38_000);
+  });
+
+  it('a row with no date anywhere files the preceding year end, never blank', () => {
+    const v = s10For({ nonCapitalCarrybacks: [{}, { amount: 12_000 }] });
+    const start = new Date(fed.period.start);
+    const yearEnd = (i: number) => {
+      const d = new Date(start);
+      d.setUTCDate(d.getUTCDate() - 1);
+      d.setUTCFullYear(d.getUTCFullYear() - i);
+      return d.toISOString().slice(0, 10);
+    };
+    expect(v['003']).toBe(yearEnd(0));
+    expect(v['005']).toBe(yearEnd(1));
+    expect(v['006']).toBe(12_000);
+  });
+
+  it('a row date entered once is shared by every column on that row', () => {
+    const v = s10For({
+      nonCapitalCarrybacks: [{ taxYearEnd: '2024-12-31', amount: 5_000 }],
+      farmCurrentYearLoss: 8_000,
+      farmCarrybacks: [{ amount: 3_000 }],
+    });
+    expect(v['003']).toBe('2024-12-31');
+    expect(v['004']).toBe(5_000);
+    expect(v['014']).toBe(3_000);
+  });
+});

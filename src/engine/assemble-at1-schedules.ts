@@ -539,9 +539,63 @@ function scheduleEighteen(fed: Fed, ab: AlbertaValues, ri: Ri) {
  * jacket keeps the engine's own default. A return cannot be transmitted without
  * the mandatory jacket answers regardless.
  */
+type SbdStatus = NonNullable<AlbertaSbdValues['corporationStatus']>;
+
+/**
+ * Who may claim the Alberta SBD — read off the jacket, where the return
+ * already states it, rather than asked a second time on Schedule 1.
+ *
+ * §3.2.3.2, Schedule 1's own existence rule: the form "can be completed" if
+ * "000029 = 1 or 2 throughout the taxation year or 000030 = 3 or 4 (i.e.
+ * Alberta co-op or credit union)", and "If 000030 = 5 (i.e. sec. 149 exempt),
+ * then form 001 cannot exist. SBD cannot be claimed." 029's own rule: "If a
+ * corporation is a CCPC at the end of the year but not throughout the year,
+ * then value = 5."
+ *
+ * Schedule 1 used to carry its own "corporation status" question, collected
+ * in the guided view only. Form View never showed it, so Schedule 1 was never
+ * filed from there while the jacket still claimed the deduction.
+ *
+ * Order: the jacket's answers; then a status saved by the old Schedule 1
+ * question (returns prepared before this change); then the client record's
+ * corporation type, the fact the federal engine already uses — so the jacket
+ * and Schedule 1 always rest on the same answer.
+ */
+export function albertaSbdEligibility(
+  ri: Ri,
+  fed: Fed,
+): { status: SbdStatus; wasCcpcThroughoutYear?: false } | undefined {
+  const jacket = (ri.alberta ?? {}) as {
+    typeOfCorporation?: string;
+    specialCorporationStatus?: string;
+  };
+  const special = String(jacket.specialCorporationStatus ?? '').trim();
+  if (special === '5') return { status: 'section149Exempt' };
+  if (special === '3' || special === '4') return { status: 'albertaCoopOrCreditUnion' };
+
+  const type = String(jacket.typeOfCorporation ?? '').trim();
+  if (type === '1' || type === '2') return { status: 'ccpc' };
+  if (type === '5') return { status: 'ccpc', wasCcpcThroughoutYear: false };
+  if (type === '3' || type === '4') return { status: 'other' };
+
+  const legacy: AlbertaSbdValues = ri.albertaSbd ?? {};
+  if (legacy.corporationStatus) {
+    return {
+      status: legacy.corporationStatus,
+      ...(legacy.wasCcpcThroughoutYear === 'no' ? { wasCcpcThroughoutYear: false as const } : {}),
+    };
+  }
+
+  const isCcpc = (fed as { isCcpc?: boolean }).isCcpc;
+  if (isCcpc === true) return { status: 'ccpc' };
+  if (isCcpc === false) return { status: 'other' };
+  return undefined;
+}
+
 export function albertaSbdFacts(fed: Fed, ri: Ri) {
   const ab: AlbertaSbdValues = ri.albertaSbd ?? {};
-  if (!ab.corporationStatus) return undefined; // no eligibility answer ⇒ nothing to claim
+  const eligibility = albertaSbdEligibility(ri, fed);
+  if (!eligibility) return undefined; // no eligibility answer ⇒ nothing to claim
   const sbd = ri.sbd ?? {};
   // Reuses the FEDERAL associated-group facts (same corporations, same ITA
   // test) — there is no AT1-specific association UI, and the group a
@@ -556,8 +610,8 @@ export function albertaSbdFacts(fed: Fed, ri: Ri) {
       num(fed.activeBusinessIncome),
       ri.albertaSchedule12,
     ).albertaAbi,
-    status: ab.corporationStatus,
-    ...(ab.wasCcpcThroughoutYear === 'no' ? { wasCcpcThroughoutYear: false } : {}),
+    status: eligibility.status,
+    ...(eligibility.wasCcpcThroughoutYear === false ? { wasCcpcThroughoutYear: false } : {}),
     ...(isAssociated ? { isAssociated: true } : {}),
     ...(isAssociated && sbd.businessLimit != null
       ? { allocatedBusinessLimit: num(sbd.businessLimit) }
@@ -585,6 +639,16 @@ export function albertaSbdFacts(fed: Fed, ri: Ri) {
  * income that attracts the small-business rate; it does not itself change
  * what tax is payable.
  */
+/** Days in the tax year, inclusive — for every short-year proration on the AT1. */
+function daysInTaxYearOf(fed: Fed): number | undefined {
+  const ms = (v: unknown) => (v instanceof Date ? v.getTime() : Date.parse(String(v ?? '')));
+  const start = ms(fed.period?.start);
+  const end = ms(fed.period?.end);
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? Math.round((end - start) / 86_400_000) + 1
+    : undefined;
+}
+
 function scheduleOne(
   fed: Fed,
   ri: Ri,
@@ -604,7 +668,22 @@ function scheduleOne(
   const facts = albertaSbdFacts(fed, ri);
   if (!facts) return undefined;
 
-  const result = computeAlbertaSbd({ albertaTaxableIncome, ...facts }, defaultBusinessLimit);
+  /*
+   * Days in the tax year, for Area B(i)'s short-year proration of line 015.
+   * The jacket's own SBD computation (ca-tax `at1-tax.ts`) has always passed
+   * this; this composer did not, so a short year FILED the full-year base
+   * amount at 015 while the jacket claimed the prorated deduction — a
+   * Schedule 1 that contradicted its own 070.
+   */
+  const daysInTaxYear = daysInTaxYearOf(fed);
+  const result = computeAlbertaSbd(
+    {
+      albertaTaxableIncome,
+      ...facts,
+      ...(daysInTaxYear !== undefined ? { daysInTaxYear } : {}),
+    },
+    defaultBusinessLimit,
+  );
 
   // Area A — the associated group's own allocation table (041/043/045),
   // filed alongside line 001. Re-entered by the preparer, not joined against
@@ -662,15 +741,61 @@ function scheduleOne(
  * shared column's current-year-loss is the SUM of both pools' own current-
  * year losses (021097 + 021117).
  */
-function scheduleTen(federal: FederalT2Result, ri: Ri) {
+function scheduleTen(federal: FederalT2Result, ri: Ri, taxYearStart?: unknown) {
   const c: AlbertaContinuityValues = ri.albertaContinuity ?? {};
 
-  const rowsFrom = (
-    field: 'nonCapitalCarrybacks' | 'capitalCarrybacks' | 'farmCarrybacks' | 'otherLossCarrybacks',
-  ): { taxYearEnd: string; amount: number }[] =>
-    (c[field] ?? [])
-      .filter((r) => present(r?.amount))
-      .map((r) => ({ taxYearEnd: String(r.taxYearEnd), amount: num(r.amount) }));
+  type CarrybackField =
+    | 'nonCapitalCarrybacks'
+    | 'capitalCarrybacks'
+    | 'farmCarrybacks'
+    | 'otherLossCarrybacks';
+  const CARRYBACK_FIELDS: CarrybackField[] = [
+    'nonCapitalCarrybacks',
+    'farmCarrybacks',
+    'otherLossCarrybacks',
+    'capitalCarrybacks',
+  ];
+  /*
+   * Row i IS the i-th preceding year — the printed form's rows are fixed
+   * positions (004/006/008 = 1st/2nd/3rd preceding), and the date on each row
+   * (003/005/007) is shared by every column. Blank rows used to be FILTERED
+   * out, so an amount entered only against the 2nd preceding year slid up and
+   * filed as the 1st. Rows are kept in place now: a blank amount before the
+   * last entered one is a nil carry-back to that year, and a row's date falls
+   * back to the same row's date in any other column.
+   */
+  /*
+   * A row with no date entered anywhere takes the i-th preceding year end —
+   * the day before this tax year starts, less i years — the same default the
+   * form shows. §3.2.3.11 requires 003/005/007 whenever their row files, so a
+   * blank date on a nil row would otherwise break TRA's own rule.
+   */
+  const defaultYearEnd = (i: number): string => {
+    const start =
+      taxYearStart instanceof Date ? new Date(taxYearStart) : new Date(String(taxYearStart ?? ''));
+    if (Number.isNaN(start.getTime())) return '';
+    start.setUTCDate(start.getUTCDate() - 1);
+    start.setUTCFullYear(start.getUTCFullYear() - i);
+    return start.toISOString().slice(0, 10);
+  };
+  const sharedYearEnd = (i: number): string =>
+    CARRYBACK_FIELDS.map((f) => c[f]?.[i]?.taxYearEnd).find(
+      (d): d is string => typeof d === 'string' && d.trim() !== '',
+    ) ?? defaultYearEnd(i);
+  const rowsFrom = (field: CarrybackField): { taxYearEnd: string; amount: number }[] => {
+    const rows = c[field] ?? [];
+    let last = -1;
+    rows.forEach((r, i) => {
+      if (present(r?.amount)) last = i;
+    });
+    return rows.slice(0, last + 1).map((r, i) => ({
+      taxYearEnd:
+        r?.taxYearEnd && String(r.taxYearEnd).trim() !== ''
+          ? String(r.taxYearEnd)
+          : sharedYearEnd(i),
+      amount: present(r?.amount) ? num(r?.amount) : 0,
+    }));
+  };
 
   /*
    * The non-capital column, stated on the Alberta side or defaulted from
@@ -701,7 +826,10 @@ function scheduleTen(federal: FederalT2Result, ri: Ri) {
   const capital =
     capitalCarrybackRows.length > 0
       ? computeLossCarryback({
-          currentYearLoss: federal.losses.netCapital.currentYearLoss,
+          // Same figure as federal (TRA), but typed when there is no T2 here to take it from.
+          currentYearLoss: present(c.capitalCurrentYearLoss)
+            ? num(c.capitalCurrentYearLoss)
+            : federal.losses.netCapital.currentYearLoss,
           carrybacks: capitalCarrybackRows,
         })
       : undefined;
@@ -765,12 +893,12 @@ function scheduleTen(federal: FederalT2Result, ri: Ri) {
 
   if (!nonCapital && !capital && !farm && !otherLoss) return undefined;
 
-  // Every column's preceding-year date fields (003/005/007) are shared on
-  // the live form, so they need the same three years — whichever column
-  // has data first supplies the dates.
-  const precedingYearEnds = (nonCapital ?? farm ?? otherLoss?.result ?? capital)!.carrybacks.map(
-    (cb) => cb.taxYearEnd,
+  // The date fields (003/005/007) are shared by every column on the printed
+  // form — one per row, as far down as any column carries back.
+  const rowCount = Math.max(
+    ...[nonCapital, farm, otherLoss?.result, capital].map((r) => r?.carrybacks.length ?? 0),
   );
+  const precedingYearEnds = Array.from({ length: rowCount }, (_, i) => sharedYearEnd(i));
 
   return {
     ...(nonCapital ? { nonCapital } : {}),
@@ -894,7 +1022,8 @@ function scheduleTwentyOne(
     capitalCarriedBack !== undefined
       ? { ...federal.losses.netCapital, carriedBack: capitalCarriedBack }
       : federal.losses.netCapital,
-    undefined,
+    // The same figure Schedule 10's capital column draws on — one entry, both schedules.
+    present(c.capitalCurrentYearLoss) ? num(c.capitalCurrentYearLoss) : undefined,
     {
       applied: c.capitalApplied,
       // NOT `expired` — AT1_SCHEDULE_21_POOLS' own capital entry has no
@@ -1972,14 +2101,14 @@ export function assembleAt1Schedules(
   const cca = scheduleThirteen(fed, ab, ri);
   const reserves = scheduleSeventeen(fed, ri, ab);
   const dispositions = scheduleEighteen(fed, ab, ri);
-  const lossCarryback = scheduleTen(federal, ri);
+  const lossCarryback = scheduleTen(federal, ri, fed.period?.start);
 
   // Nine standalone Alberta-only credit/deduction schedules — none are
   // reconciliation overlays like 13/17/18, so none read `ab`'s divergence
   // flags; each is filed whenever its own `ri.*` slice has real data.
   const otherDeductionsCredits = assembleSchedule3(ri);
   const foreignInvestmentTaxCredit = assembleSchedule4(ri);
-  const resourceDeductions = assembleSchedule15(ri);
+  const resourceDeductions = assembleSchedule15(ri, daysInTaxYearOf(fed));
   const scientificResearch = assembleSchedule16(ri);
 
   // Schedule 12 needs 13/17/18's results AND the loss continuities' results —

@@ -30,6 +30,47 @@ import {
  */
 export const AlbertaValues = z
   .object({
+    // ── Identification (page 1) — typed on the jacket, as in every tax package ──
+    //
+    // Blank = the client profile's value, so a client that already holds these
+    // files unchanged. See `at1-identity.ts`.
+    legalName: z.string().optional().describe('000010 — legal name of the corporation.'),
+    operatingName: z
+      .string()
+      .optional()
+      .describe('000011 — operating name, where it differs from the legal name.'),
+    addressStreet: z.string().optional().describe('000012 — mailing address, line 1.'),
+    addressLine2: z.string().optional().describe('000013 — mailing address, line 2.'),
+    addressCity: z.string().optional().describe('000014 — city/town.'),
+    addressProvince: z.string().optional().describe('000015 — province/state.'),
+    addressCountry: z
+      .string()
+      .optional()
+      .describe('000016 — country code, only when other than Canada (e.g. US).'),
+    addressPostalCode: z.string().optional().describe('000017 — postal/ZIP code.'),
+    contactPerson: z.string().optional().describe('000025 — contact person to discuss the return.'),
+    contactTelephone: z
+      .string()
+      .optional()
+      .describe('000026 — contact person’s telephone number, 10 digits.'),
+    natureOfBusiness: z
+      .string()
+      .optional()
+      .describe('000028 — nature of business, a 4-digit SIC code.'),
+    typeOfCorporation: z
+      .string()
+      .optional()
+      .describe('000029 — type of corporation, a 1-digit code (1-5).'),
+    corporateAccountNumber: z
+      .string()
+      .optional()
+      .describe('000034 — Alberta corporate account number (CAN).'),
+    businessNumber: z.string().optional().describe('000035 — federal Business Number (BN).'),
+    authorizedEmail: z
+      .string()
+      .optional()
+      .describe('000105 — email address TRA sends corporate income tax notices to.'),
+
     grossRevenue: z
       .number()
       .optional()
@@ -147,6 +188,57 @@ export const AlbertaValues = z
       .string()
       .optional()
       .describe('000053 — date operations ceased, required when 000051 = 5 (dissolution).'),
+
+    // ── Schedule 2 Area A — typed on Schedule 2 itself ────────────────────
+    //
+    // Blank = rolled up from the federal Schedule 5 establishments, the normal
+    // path when the T2 is prepared here. Typed when it was not: without these
+    // an AT1 with a permanent establishment outside Alberta had no way to
+    // state its allocation at all and was taxed as 100% Alberta. The four are
+    // taken together — any one entered replaces the whole federal roll-up, so
+    // the factor is never built from two sources at once.
+    allocationAlbertaSalaries: z
+      .number()
+      .optional()
+      .describe('002002 — salaries and wages paid in Alberta.'),
+    allocationTotalSalaries: z
+      .number()
+      .optional()
+      .describe('002004 — total salaries and wages paid in all jurisdictions.'),
+    allocationAlbertaRevenue: z.number().optional().describe('002006 — gross revenue in Alberta.'),
+    allocationTotalRevenue: z
+      .number()
+      .optional()
+      .describe('002008 — gross revenue in all jurisdictions.'),
+
+    // ── Schedule 2 Area B — the special allocation formulas ───────────────
+    specialAllocationFormula: z
+      .enum([
+        'bus-truck',
+        'grain-elevator',
+        'pipeline',
+        'insurance',
+        'chartered-banks',
+        'trust-loan',
+        'airline',
+        'railway',
+        'ship',
+        'divided-businesses',
+      ])
+      .optional()
+      .describe(
+        '002001 answered Yes — the ONE Area B formula (ITA Reg 403-412) the corporation uses. ' +
+          'Where more than one would apply, the page directs it to divided-businesses. Absent = ' +
+          'Area A, the general formula.',
+      ),
+    allocationAreaB: z
+      .record(z.string().regex(/^l\d{3}$/), z.number())
+      .optional()
+      .describe(
+        'Area B amounts keyed by printed line with an `l` prefix (`l012`, `l014`, …) — only the ' +
+          'chosen formula’s lines are read. Kilometres, bushels, miles and tonnage are counts, ' +
+          'not dollars. G/H (102/104) and 108 are computed, never entered.',
+      ),
   })
   .meta({ id: 'AlbertaValues' });
 
@@ -539,6 +631,15 @@ export const AlbertaContinuityValues = z
           'automatically from Schedule 12’s Alberta reconciliation), no federal input in this ' +
           'engine breaks losses down by farm/non-farm activity, so a genuine Alberta-federal ' +
           'divergence here can only be stated directly.',
+      ),
+    capitalCurrentYearLoss: z
+      .number()
+      .optional()
+      .describe(
+        'Gross current-year capital loss (Schedule 10 line 042; Schedule 21’s capital ' +
+          'current-year row), as a POSITIVE amount. Blank = the federal figure — TRA confirms the ' +
+          'two are the same, so this is not a divergence. It exists because with no T2 in this ' +
+          'app there is no federal figure to take, and a capital carry-back had nothing to draw on.',
       ),
     restrictedFarmOpening: z.number().optional(),
     restrictedFarmCurrentYearLoss: z

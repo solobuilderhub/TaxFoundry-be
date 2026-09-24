@@ -16,9 +16,13 @@ import {
   AB_TAX_RATE_BOOK,
   computeAllocationFactor,
   computeFederalT2,
+  computeSpecialAllocation,
   type FederalT2Input,
   resolveAlbertaTaxRates,
   SINGLE_JURISDICTION_ALBERTA_FACTOR,
+  SPECIAL_ALLOCATION_INPUT_LINES,
+  type SpecialAllocationFormula,
+  type SpecialAllocationResult,
 } from '@classytic/ca-tax/t2';
 import { albertaSbdFacts, assembleAt1Schedules } from './assemble-at1-schedules.js';
 import type { ComposedFederalInput } from './assemble-t2-input.js';
@@ -94,6 +98,57 @@ function albertaAllocationFrom(pes: Pe[]): {
 }
 
 /**
+ * Schedule 2 Area A as typed on the AT1's own Schedule 2.
+ *
+ * Wins over the federal Schedule 5 roll-up, and as a SET: any one of the four
+ * boxes entered means the preparer is stating the allocation, and the rest
+ * read as nil rather than being topped up from Schedule 5 — a factor built
+ * half from each would match neither. All four blank = `undefined`, and the
+ * federal roll-up applies exactly as before.
+ *
+ * Nothing entered as a basis at all (every box 0) is the same "no allocation
+ * basis" case `albertaAllocationFrom` treats as 100% Alberta.
+ */
+function enteredAllocation(ri: ReturnInput): ReturnType<typeof albertaAllocationFrom> | undefined {
+  const ab = ri.alberta ?? {};
+  const boxes = [
+    ab.allocationAlbertaSalaries,
+    ab.allocationTotalSalaries,
+    ab.allocationAlbertaRevenue,
+    ab.allocationTotalRevenue,
+  ];
+  if (boxes.every((v) => v == null)) return undefined;
+  const entered = {
+    albertaSalaries: num(ab.allocationAlbertaSalaries),
+    totalSalaries: num(ab.allocationTotalSalaries),
+    albertaGrossRevenue: num(ab.allocationAlbertaRevenue),
+    totalGrossRevenue: num(ab.allocationTotalRevenue),
+  };
+  if (entered.totalSalaries === 0 && entered.totalGrossRevenue === 0) return null;
+  return entered;
+}
+
+/**
+ * Schedule 2 Area B as the preparer entered it — the chosen formula and ITS
+ * lines only. Amounts left under another formula (a preparer who switched
+ * formulas) are ignored rather than filed.
+ */
+function specialAllocationOf(
+  ri: ReturnInput,
+): { formula: SpecialAllocationFormula; lines: Record<string, number> } | undefined {
+  const ab = ri.alberta ?? {};
+  const formula = ab.specialAllocationFormula as SpecialAllocationFormula | undefined;
+  if (!formula) return undefined;
+  const entered = (ab.allocationAreaB ?? {}) as Record<string, number | undefined>;
+  const lines: Record<string, number> = {};
+  for (const line of SPECIAL_ALLOCATION_INPUT_LINES[formula]) {
+    const v = entered[`l${line}`];
+    if (v != null) lines[line] = Number(v);
+  }
+  return { formula, lines };
+}
+
+/**
  * Build the provincial engine input from the federal engine input + working return.
  * `federalEngineInput` is the T2-shaped input AFTER authoritative identity (isCcpc)
  * and prior-year openings have been applied, so its taxable income is the filed one
@@ -114,8 +169,9 @@ export function assembleProvincialInput(
   const pes = (fed.permanentEstablishments ?? []).filter((pe): pe is Pe => !!pe?.province);
 
   if (program === 'AT1') {
-    const allocation = albertaAllocationFrom(pes);
-    const allocationFactor = allocation
+    const entered = enteredAllocation(ri);
+    const allocation = entered !== undefined ? entered : albertaAllocationFrom(pes);
+    let allocationFactor = allocation
       ? computeAllocationFactor(allocation)
       : SINGLE_JURISDICTION_ALBERTA_FACTOR;
     /*
@@ -174,14 +230,34 @@ export function assembleProvincialInput(
      * there — so a negative 062 (a real Alberta loss) transmits as the loss
      * it is, and simply produces no tax.
      */
-    const { schedules, ieg, albertaTaxableIncome } = assembleAt1Schedules(
-      federal,
-      fed,
-      ri,
-      statedTaxableIncome,
-      rates.BUSINESS_LIMIT,
-      allocationFactor,
-    );
+    const assemble = (factor: number) =>
+      assembleAt1Schedules(federal, fed, ri, statedTaxableIncome, rates.BUSINESS_LIMIT, factor);
+
+    /*
+     * Schedule 2 Area B — a special allocation formula, when line 001 is Yes.
+     *
+     * Ship operators and Divided Businesses allocate dollars of Alberta taxable
+     * income, so their factor needs line 062 first. 062 is Schedule 12 line
+     * 090, which is taxable income BEFORE allocation — nothing that produces it
+     * reads the factor — so one pass at any factor yields it, and the real pass
+     * follows with the factor it gives. Line 064 (royalty tax deduction) is not
+     * collected by this product and files as nil, so the base is 062 itself.
+     *
+     * A formula that cannot be computed (a blank line, a nil divisor) throws
+     * `At1SpecialAllocationError` naming each line; the compute and preview
+     * paths report it as a 400, not a 500.
+     */
+    const areaB = specialAllocationOf(ri);
+    let special: SpecialAllocationResult | undefined;
+    if (areaB) {
+      const needsIncome = areaB.formula === 'ship' || areaB.formula === 'divided-businesses';
+      special = computeSpecialAllocation({
+        ...areaB,
+        ...(needsIncome ? { taxableIncomeBase: assemble(1).albertaTaxableIncome } : {}),
+      });
+      allocationFactor = special.factor;
+    }
+    const { schedules, ieg, albertaTaxableIncome } = assemble(allocationFactor);
 
     // The SAME eligibility facts Schedule 1 is filed from. Without them the
     // engine's own `computeAlbertaSbd` sees no status and defaults to eligible,
@@ -221,14 +297,19 @@ export function assembleProvincialInput(
      * `albertaRevenue`/`totalRevenue`. Spreading one into the other would file
      * two undefined lines and look like it worked.
      */
-    const scheduleTwo = allocation
+    const scheduleTwo = special
       ? {
-          albertaSalaries: allocation.albertaSalaries,
-          totalSalaries: allocation.totalSalaries,
-          albertaRevenue: allocation.albertaGrossRevenue,
-          totalRevenue: allocation.totalGrossRevenue,
+          specialAllocationCategory: true,
+          special: { formula: areaB!.formula, lines: special.lines },
         }
-      : undefined;
+      : allocation
+        ? {
+            albertaSalaries: allocation.albertaSalaries,
+            totalSalaries: allocation.totalSalaries,
+            albertaRevenue: allocation.albertaGrossRevenue,
+            totalRevenue: allocation.totalGrossRevenue,
+          }
+        : undefined;
     const filedSchedules = scheduleTwo
       ? { ...(schedules ?? {}), allocation: scheduleTwo }
       : schedules;
@@ -264,7 +345,8 @@ export function assembleProvincialInput(
       // `federalTaxableIncome` is exactly how the two came to disagree.
       albertaTaxableIncome,
       ...(sbdFacts ?? {}),
-      ...(allocation ? { allocation } : {}),
+      // Area B states the factor outright; Area A gives the engine its four bases.
+      ...(special ? { allocationFactor: special.factor } : allocation ? { allocation } : {}),
       ...(num(ab.manufacturingDeduction) > 0
         ? { manufacturingDeduction: num(ab.manufacturingDeduction) }
         : {}),

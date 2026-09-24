@@ -622,7 +622,11 @@ function cfreSuccessorEntries(
  * "entered something": those alone would produce every pool at a zero
  * balance, which is not a return worth filing this schedule for.
  */
-export function assembleSchedule15(ri: ReturnInput): AlbertaSchedule15Result | undefined {
+export function assembleSchedule15(
+  ri: ReturnInput,
+  /** The tax year's own length — the default when none is typed. */
+  taxYearDays?: number,
+): AlbertaSchedule15Result | undefined {
   const root: AlbertaResourceDeductions15Values | undefined = ri.albertaResourceDeductions15;
   if (!root) return undefined;
 
@@ -668,7 +672,12 @@ export function assembleSchedule15(ri: ReturnInput): AlbertaSchedule15Result | u
     return undefined;
   }
 
-  const daysInTaxYear = present(root.daysInTaxYear) ? num(root.daysInTaxYear) : undefined;
+  /*
+   * A typed figure wins; otherwise the tax year's own length. It used to be
+   * typed-or-nothing, and nothing meant 365 — so a short year's resource
+   * claims were not prorated unless the preparer knew to enter this.
+   */
+  const daysInTaxYear = present(root.daysInTaxYear) ? num(root.daysInTaxYear) : taxYearDays;
 
   // CCOGPE is composed BEFORE CDE, matching `computeAlbertaSchedule15`'s own
   // ordering — CDE lines 015105/015133 need the CCOGPE subtotal, and

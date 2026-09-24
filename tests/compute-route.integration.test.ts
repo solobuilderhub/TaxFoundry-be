@@ -5,26 +5,27 @@
  * fact, and advances the engagement status. Uses an in-memory Mongo
  * (mongodb-memory-server); the binary downloads on first run.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import mongoose from 'mongoose';
-import { createTestApp } from '@classytic/arc/testing';
+
 import type { TestAppContext, TestAuthProvider } from '@classytic/arc/testing';
-import clientResource from '../src/resources/engagement/client/client.resource.js';
-import engagementYearResource from '../src/resources/engagement/engagement-year/engagement-year.resource.js';
-import computedReturnResource from '../src/resources/ledger/computed-return/computed-return.resource.js';
-import factLogResource from '../src/resources/ledger/fact-log/fact-log.resource.js';
-import reviewMemoResource from '../src/resources/workpapers/review-memo/review-memo.resource.js';
-import filingRecordResource from '../src/resources/workpapers/filing-record/filing-record.resource.js';
-import Client from '../src/resources/engagement/client/client.model.js';
-import EngagementYear from '../src/resources/engagement/engagement-year/engagement-year.model.js';
-import ComputedReturn from '../src/resources/ledger/computed-return/computed-return.model.js';
-import FactLog from '../src/resources/ledger/fact-log/fact-log.model.js';
-import ReviewMemo from '../src/resources/workpapers/review-memo/review-memo.model.js';
-import FilingRecord from '../src/resources/workpapers/filing-record/filing-record.model.js';
-import { setAt1FilingGateway } from '../src/filing/at1-gateway.js';
-import { setT2CifGateway } from '../src/filing/t2-cif-gateway.js';
-import { setCertifiedT2Serializer } from '../src/filing/t2-certified-serializer.js';
+import { createTestApp } from '@classytic/arc/testing';
+import mongoose from 'mongoose';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { setAfrGateway } from '../src/afr/afr-gateway.js';
+import { setAt1FilingGateway } from '../src/filing/at1-gateway.js';
+import { setCertifiedT2Serializer } from '../src/filing/t2-certified-serializer.js';
+import { setT2CifGateway } from '../src/filing/t2-cif-gateway.js';
+import Client from '../src/resources/engagement/client/client.model.js';
+import clientResource from '../src/resources/engagement/client/client.resource.js';
+import EngagementYear from '../src/resources/engagement/engagement-year/engagement-year.model.js';
+import engagementYearResource from '../src/resources/engagement/engagement-year/engagement-year.resource.js';
+import ComputedReturn from '../src/resources/ledger/computed-return/computed-return.model.js';
+import computedReturnResource from '../src/resources/ledger/computed-return/computed-return.resource.js';
+import FactLog from '../src/resources/ledger/fact-log/fact-log.model.js';
+import factLogResource from '../src/resources/ledger/fact-log/fact-log.resource.js';
+import FilingRecord from '../src/resources/workpapers/filing-record/filing-record.model.js';
+import filingRecordResource from '../src/resources/workpapers/filing-record/filing-record.resource.js';
+import ReviewMemo from '../src/resources/workpapers/review-memo/review-memo.model.js';
+import reviewMemoResource from '../src/resources/workpapers/review-memo/review-memo.resource.js';
 
 const TEST_ORG = '64f000000000000000000001';
 const MANAGER = '64f0000000000000000000a1';
@@ -159,7 +160,9 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
     const computed = await ComputedReturn.findById(result.computedReturnId).lean();
     expect(computed).toBeTruthy();
     expect(computed!.engineVersion).toBeTruthy();
-    expect((computed!.fields as { provenance: string }[]).every((f) => f.provenance === 'engine')).toBe(true);
+    expect(
+      (computed!.fields as { provenance: string }[]).every((f) => f.provenance === 'engine'),
+    ).toBe(true);
 
     // Compute appends the AdjustmentComputed fact AND auto-runs the review layer,
     // which appends a DiagnosticRaised fact — two facts, in sequence.
@@ -248,12 +251,21 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
 
   it('auto-fill is fail-closed (503) until a CRA AFR gateway is wired', async () => {
     const engRes = await ctx.app.inject({
-      method: 'POST', url: '/engagement-years', headers: auth.as('manager').headers,
-      payload: { clientId: CLIENT, program: 'T2', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+      method: 'POST',
+      url: '/engagement-years',
+      headers: auth.as('manager').headers,
+      payload: {
+        clientId: CLIENT,
+        program: 'T2',
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-12-31T00:00:00.000Z',
+      },
     });
     const engId: string = (engRes.json().data ?? engRes.json())._id;
     const res = await ctx.app.inject({
-      method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
       payload: { action: 'auto-fill' },
     });
     expect(res.statusCode).toBe(503);
@@ -273,19 +285,30 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
     });
     try {
       const engRes = await ctx.app.inject({
-        method: 'POST', url: '/engagement-years', headers: auth.as('manager').headers,
-        payload: { clientId: CLIENT, program: 'T2', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+        method: 'POST',
+        url: '/engagement-years',
+        headers: auth.as('manager').headers,
+        payload: {
+          clientId: CLIENT,
+          program: 'T2',
+          taxYearStart: '2024-01-01T00:00:00.000Z',
+          taxYearEnd: '2024-12-31T00:00:00.000Z',
+        },
       });
       const engId: string = (engRes.json().data ?? engRes.json())._id;
 
       // Preparer already entered a GRIP — auto-fill must NOT overwrite it.
       await ctx.app.inject({
-        method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
         payload: { action: 'save-input', returnInput: { dividends: { openingGrip: 999 } } },
       });
 
       const res = await ctx.app.inject({
-        method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
         payload: { action: 'auto-fill', programAccount: '0001' },
       });
       expect(res.statusCode).toBe(200);
@@ -305,19 +328,32 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
       expect(facts[0]!.provenance).toBe('imported');
     } finally {
       // Restore the fail-closed default so later tests aren't affected.
-      setAfrGateway({ async fetchCorporateData() { throw new Error('not configured'); } });
+      setAfrGateway({
+        async fetchCorporateData() {
+          throw new Error('not configured');
+        },
+      });
     }
   }, 20_000);
 
   it('Schedule 33 taxable capital + Schedule 13 reserves flow through the structured editor path', async () => {
     const createRes = await ctx.app.inject({
-      method: 'POST', url: '/engagement-years', headers: auth.as('manager').headers,
-      payload: { clientId: CLIENT, program: 'T2', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+      method: 'POST',
+      url: '/engagement-years',
+      headers: auth.as('manager').headers,
+      payload: {
+        clientId: CLIENT,
+        program: 'T2',
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-12-31T00:00:00.000Z',
+      },
     });
     const engId: string = (createRes.json().data ?? createRes.json())._id;
 
     const res = await ctx.app.inject({
-      method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
       payload: {
         action: 'compute',
         returnInput: {
@@ -351,12 +387,21 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
     // A 182-day 2024 stub year. The engine must prorate the $500k limit by days/365
     // → ~249,315, capping SBD income below the full $500k ABI.
     const engRes = await ctx.app.inject({
-      method: 'POST', url: '/engagement-years', headers: auth.as('manager').headers,
-      payload: { clientId: CLIENT, program: 'T2', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-06-30T00:00:00.000Z' },
+      method: 'POST',
+      url: '/engagement-years',
+      headers: auth.as('manager').headers,
+      payload: {
+        clientId: CLIENT,
+        program: 'T2',
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-06-30T00:00:00.000Z',
+      },
     });
     const engId: string = (engRes.json().data ?? engRes.json())._id;
     const res = await ctx.app.inject({
-      method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
       payload: {
         action: 'compute',
         returnInput: {
@@ -367,7 +412,9 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
       },
     });
     expect(res.statusCode).toBe(200);
-    const computed = await ComputedReturn.findById((res.json().data ?? res.json()).computedReturnId).lean();
+    const computed = await ComputedReturn.findById(
+      (res.json().data ?? res.json()).computedReturnId,
+    ).lean();
     const fields = computed!.fields as { line: string; value: number }[];
     // SBD income prorated to the short-year limit, NOT the full 500k.
     expect(fields.find((f) => f.line === 'sbdIncome')!.value).toBe(249_315);
@@ -434,7 +481,12 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
       method: 'POST',
       url: '/engagement-years',
       headers: auth.as('manager').headers,
-      payload: { clientId: CLIENT, program: 'CO17', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+      payload: {
+        clientId: CLIENT,
+        program: 'CO17',
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-12-31T00:00:00.000Z',
+      },
     });
     const engId: string = (createRes.json().data ?? createRes.json())._id;
     const res = await ctx.app.inject({
@@ -481,7 +533,12 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
       method: 'POST',
       url: '/engagement-years',
       headers: auth.as('manager').headers,
-      payload: { clientId, program: 'AT1', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+      payload: {
+        clientId,
+        program: 'AT1',
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-12-31T00:00:00.000Z',
+      },
     });
     const engId: string = (engRes.json().data ?? engRes.json())._id;
 
@@ -523,7 +580,12 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
       method: 'POST',
       url: '/engagement-years',
       headers: auth.as('manager').headers,
-      payload: { clientId: CLIENT, program: 'AT1', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+      payload: {
+        clientId: CLIENT,
+        program: 'AT1',
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-12-31T00:00:00.000Z',
+      },
     });
     const engId: string = (engRes.json().data ?? engRes.json())._id;
     const res = await ctx.app.inject({
@@ -552,7 +614,12 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
       method: 'POST',
       url: '/engagement-years',
       headers: auth.as('manager').headers,
-      payload: { clientId, program: 'AT1', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+      payload: {
+        clientId,
+        program: 'AT1',
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-12-31T00:00:00.000Z',
+      },
     });
     const engId = (engRes.json().data ?? engRes.json())._id;
     await ctx.app.inject({
@@ -590,7 +657,9 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
     const memo = await ReviewMemo.create({
       engagementYearId: engId,
       status: 'draft',
-      flags: [{ severity: 'red', code: 'S1_MISMATCH', message: 'net income mismatch', resolved: false }],
+      flags: [
+        { severity: 'red', code: 'S1_MISMATCH', message: 'net income mismatch', resolved: false },
+      ],
       organizationId: TEST_ORG,
       createdBy: MANAGER,
     });
@@ -608,7 +677,9 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
 
     // A clean review memo BOUND to the exact computed return (as production review
     // generation does) — transmit now requires the sign-off to reference it.
-    const cr = await ComputedReturn.findOne({ engagementYearId: engId }).sort({ createdAt: -1 }).lean();
+    const cr = await ComputedReturn.findOne({ engagementYearId: engId })
+      .sort({ createdAt: -1 })
+      .lean();
     const memo = await ReviewMemo.create({
       engagementYearId: engId,
       computedReturnId: cr!._id,
@@ -631,7 +702,15 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
       method: 'POST',
       url: `/engagement-years/${engId}/action`,
       headers: auth.as('manager').headers,
-      payload: { action: 'authorize-t183', officerName: 'Jane Officer', officerPosition: 'President', signedAt: new Date(Date.now() - 60_000).toISOString(), authorizationMethod: 'electronic_signature', evidenceRef: 'T183CORP-signed.pdf', formVersion: 'T183CORP-2024' },
+      payload: {
+        action: 'authorize-t183',
+        officerName: 'Jane Officer',
+        officerPosition: 'President',
+        signedAt: new Date(Date.now() - 60_000).toISOString(),
+        authorizationMethod: 'electronic_signature',
+        evidenceRef: 'T183CORP-signed.pdf',
+        formVersion: 'T183CORP-2024',
+      },
     });
     expect(authRes.statusCode).toBe(200);
 
@@ -670,8 +749,10 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
     // Idempotency: a second transmit of the ALREADY-ACCEPTED return is refused
     // (the pre-egress attempt guard blocks a double-file).
     const dup = await ctx.app.inject({
-      method: 'POST', url: `/engagement-years/${engId}/action`,
-      headers: auth.as('manager').headers, payload: { action: 'transmit', certification },
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
+      payload: { action: 'transmit', certification },
     });
     expect(dup.statusCode).toBe(409);
     expect(dup.json().message).toMatch(/already been accepted|in-flight|unknown/i);
@@ -683,7 +764,8 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
     setCertifiedT2Serializer({
       schemaVersion: 'test-1.0',
       softwareApprovalId: 'CRA-APPROVAL-TEST',
-      serialize: (d) => `<CertifiedT2Return approvalId="CRA-APPROVAL-TEST" bn="${d.identity.businessNumber}"/>`,
+      serialize: (d) =>
+        `<CertifiedT2Return approvalId="CRA-APPROVAL-TEST" bn="${d.identity.businessNumber}"/>`,
     });
     setT2CifGateway({
       async transmit(xml) {
@@ -693,36 +775,86 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
     });
     try {
       const clientRes = await ctx.app.inject({
-        method: 'POST', url: '/clients', headers: auth.as('manager').headers,
-        payload: { name: 'Certified Filing Co', businessNumber: '100000900RC0001', corpType: 'CCPC' },
+        method: 'POST',
+        url: '/clients',
+        headers: auth.as('manager').headers,
+        payload: {
+          name: 'Certified Filing Co',
+          businessNumber: '100000900RC0001',
+          corpType: 'CCPC',
+        },
       });
       const clientId = (clientRes.json().data ?? clientRes.json())._id;
       const engRes = await ctx.app.inject({
-        method: 'POST', url: '/engagement-years', headers: auth.as('manager').headers,
-        payload: { clientId, program: 'T2', taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+        method: 'POST',
+        url: '/engagement-years',
+        headers: auth.as('manager').headers,
+        payload: {
+          clientId,
+          program: 'T2',
+          taxYearStart: '2024-01-01T00:00:00.000Z',
+          taxYearEnd: '2024-12-31T00:00:00.000Z',
+        },
       });
       const engId = (engRes.json().data ?? engRes.json())._id;
       // Structured, complete, balanced (assets 50k = liab 50k) return → fileable.
       await ctx.app.inject({
-        method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
-        payload: { action: 'compute', returnInput: {
-          identification: { corpType: 'CCPC', province: 'ON', headOffice: { line1: '1 King St', city: 'Toronto' } },
-          balanceSheet: { cash: 50000, accountsPayable: 50000 },
-          incomeStatement: { revenue: 100000, costOfSales: 40000 },
-          gifiNotes: { preparedByAccountant: true },
-          sbd: { activeBusinessIncome: 60000 },
-          shareholders: { list: [{ name: 'Owner', commonPct: 100 }] },
-        } },
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
+        payload: {
+          action: 'compute',
+          returnInput: {
+            identification: {
+              corpType: 'CCPC',
+              province: 'ON',
+              headOffice: { line1: '1 King St', city: 'Toronto' },
+            },
+            balanceSheet: { cash: 50000, accountsPayable: 50000 },
+            incomeStatement: { revenue: 100000, costOfSales: 40000 },
+            gifiNotes: { preparedByAccountant: true },
+            sbd: { activeBusinessIncome: 60000 },
+            shareholders: { list: [{ name: 'Owner', commonPct: 100 }] },
+          },
+        },
       });
-      const cr = await ComputedReturn.findOne({ engagementYearId: engId }).sort({ createdAt: -1 }).lean();
+      const cr = await ComputedReturn.findOne({ engagementYearId: engId })
+        .sort({ createdAt: -1 })
+        .lean();
       const memo = await ReviewMemo.create({
-        engagementYearId: engId, computedReturnId: cr!._id, status: 'draft',
-        flags: [{ severity: 'green', code: 'ok', message: 'ok' }], organizationId: TEST_ORG, createdBy: MANAGER,
+        engagementYearId: engId,
+        computedReturnId: cr!._id,
+        status: 'draft',
+        flags: [{ severity: 'green', code: 'ok', message: 'ok' }],
+        organizationId: TEST_ORG,
+        createdBy: MANAGER,
       });
-      await ctx.app.inject({ method: 'POST', url: `/review-memos/${memo._id}/action`, headers: auth.as('manager').headers, payload: { action: 'sign-off' } });
-      await ctx.app.inject({ method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers, payload: { action: 'authorize-t183', officerName: 'Jane Officer', officerPosition: 'President', signedAt: new Date(Date.now() - 60_000).toISOString(), authorizationMethod: 'electronic_signature', evidenceRef: 'T183-doc-1' } });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/review-memos/${memo._id}/action`,
+        headers: auth.as('manager').headers,
+        payload: { action: 'sign-off' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
+        payload: {
+          action: 'authorize-t183',
+          officerName: 'Jane Officer',
+          officerPosition: 'President',
+          signedAt: new Date(Date.now() - 60_000).toISOString(),
+          authorizationMethod: 'electronic_signature',
+          evidenceRef: 'T183-doc-1',
+        },
+      });
 
-      const res = await ctx.app.inject({ method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers, payload: { action: 'transmit', certification } });
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
+        payload: { action: 'transmit', certification },
+      });
       expect(res.statusCode).toBe(200);
       // The gateway received the CERTIFIED serializer output, and NEVER the draft.
       expect(sentXml).toContain('<CertifiedT2Return');
@@ -737,29 +869,103 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
   it('BLOCKS a stale sign-off: signing return A then recomputing B must not authorize B', async () => {
     const engId = await setupComputedAt1();
     // Sign off return A (bound to A's computed return).
-    const crA = await ComputedReturn.findOne({ engagementYearId: engId }).sort({ createdAt: -1 }).lean();
+    const crA = await ComputedReturn.findOne({ engagementYearId: engId })
+      .sort({ createdAt: -1 })
+      .lean();
     const memoA = await ReviewMemo.create({
-      engagementYearId: engId, computedReturnId: crA!._id, status: 'draft',
-      flags: [{ severity: 'green', code: 'ok', message: 'A' }], organizationId: TEST_ORG, createdBy: MANAGER,
+      engagementYearId: engId,
+      computedReturnId: crA!._id,
+      status: 'draft',
+      flags: [{ severity: 'green', code: 'ok', message: 'A' }],
+      organizationId: TEST_ORG,
+      createdBy: MANAGER,
     });
-    await ctx.app.inject({ method: 'POST', url: `/review-memos/${memoA._id}/action`, headers: auth.as('manager').headers, payload: { action: 'sign-off' } });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/review-memos/${memoA._id}/action`,
+      headers: auth.as('manager').headers,
+      payload: { action: 'sign-off' },
+    });
 
     // Recompute → a NEW computed return B (A's sign-off does not cover it).
     await ctx.app.inject({
-      method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
-      payload: { action: 'compute', period: { start: '2024-01-01', end: '2024-12-31', label: '2024' }, federalTaxableIncome: 250000, activeBusinessIncome: 250000 },
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
+      payload: {
+        action: 'compute',
+        period: { start: '2024-01-01', end: '2024-12-31', label: '2024' },
+        federalTaxableIncome: 250000,
+        activeBusinessIncome: 250000,
+      },
     });
-    const crB = await ComputedReturn.findOne({ engagementYearId: engId }).sort({ createdAt: -1 }).lean();
+    const crB = await ComputedReturn.findOne({ engagementYearId: engId })
+      .sort({ createdAt: -1 })
+      .lean();
     expect(String(crB!._id)).not.toBe(String(crA!._id)); // genuinely a new computation
 
     // Transmit must REFUSE — the only signed memo references A, not the current B.
     const res = await ctx.app.inject({
-      method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
       payload: { action: 'transmit', certification },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().message).toMatch(/has not been signed off/);
     const eng = await EngagementYear.findById(engId).lean();
     expect(eng!.status).not.toBe('filed');
+  }, 20_000);
+  /*
+   * Live recalculation. The forms only showed figures after Compute, so a
+   * preparer typing onto Schedule 1 saw every computed box stay blank. Every
+   * save now returns the engine's figures for the return as saved — and
+   * records nothing, so a preview can never pass for a reviewed computation.
+   */
+  it('save-input returns live figures and records nothing', async () => {
+    const createRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/engagement-years',
+      headers: auth.as('manager').headers,
+      payload: {
+        clientId: CLIENT,
+        program: 'AT1',
+        taxYearStart: '2025-01-01T00:00:00.000Z',
+        taxYearEnd: '2025-12-31T00:00:00.000Z',
+      },
+    });
+    const created = createRes.json().data ?? createRes.json();
+    const engId: string = created._id ?? created.id;
+    const computedBefore = await ComputedReturn.countDocuments({ engagementYearId: engId });
+    const factsBefore = await FactLog.countDocuments({ engagementYearId: engId });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
+      payload: {
+        action: 'save-input',
+        returnInput: {
+          alberta: { albertaTaxableIncome: 100000, typeOfCorporation: '1' },
+          sbd: { activeBusinessIncome: 100000 },
+          payments: { instalmentsPaid: 5000 },
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const out = res.json().data ?? res.json();
+    const f = Object.fromEntries(
+      out.preview.fields.map((x: { line: string; value: unknown }) => [x.line, x.value]),
+    );
+    expect(f.basicAlbertaTax).toBe(8000);
+    expect(f.albertaSmallBusinessDeduction).toBe(6000);
+    expect(f.albertaTaxPayable).toBe(2000);
+    const s1 = out.preview.schedulePayloads.find(
+      (p: { scheduleId: string }) => p.scheduleId === '001',
+    );
+    expect(s1.tables.sbdCalculation.line031).toBe(6000);
+
+    expect(await ComputedReturn.countDocuments({ engagementYearId: engId })).toBe(computedBefore);
+    expect(await FactLog.countDocuments({ engagementYearId: engId })).toBe(factsBefore);
   }, 20_000);
 });
