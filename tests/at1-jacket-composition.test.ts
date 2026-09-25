@@ -19,12 +19,13 @@
  * the way through — editor, composition, payload — and be REFUSED at filing,
  * rather than quietly becoming a "No" somewhere in the chain.
  */
+
+import { At1MandatoryFieldMissingError, assertAt1MandatoryComplete } from '@classytic/ca-tax/t2';
 import { describe, expect, it } from 'vitest';
-import { assertAt1MandatoryComplete, At1MandatoryFieldMissingError } from '@classytic/ca-tax/t2';
 import {
   assertValidAmendmentTarget,
-  composeAt1FilingData,
   type ComposeSources,
+  composeAt1FilingData,
 } from '../src/engine/at1-netfile.service.js';
 
 const sources = (
@@ -58,7 +59,7 @@ const sources = (
   },
   client: {
     name: 'Editor Path Ltd.',
-    businessNumber: '123456782',
+    businessNumber: '123456782RC0001',
     corporateAccountNumber: '1234567890',
     contactPerson: 'A. Preparer',
     contactTelephone: '4035550100',
@@ -199,7 +200,10 @@ describe('the freeze invariant — a filing never reads live data', () => {
   });
 
   it('prefers the FROZEN identity over a client record that has since changed', () => {
-    const s = sources(answered, { name: 'Renamed After Sign-off Ltd.', contactPerson: 'Someone Else' });
+    const s = sources(answered, {
+      name: 'Renamed After Sign-off Ltd.',
+      contactPerson: 'Someone Else',
+    });
     const d = composeAt1FilingData({ ...s, forFiling: true });
 
     expect(d.legalName).toBe('Editor Path Ltd.');

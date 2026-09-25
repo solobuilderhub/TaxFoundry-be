@@ -79,14 +79,17 @@ describe('AT1 CCA — recapture reaches taxable income (BUG-116 repro A)', () =>
     expect(out.schedulePayloads?.find((p) => p.scheduleId === '013')).toBeUndefined();
   });
 
-  it('the recapture total files at 013023 once a divergence flag is answered Yes', () => {
+  it('the recapture reaches Schedule 13 once a divergence flag is answered Yes', () => {
     const out = runAT1Compute(
       assembleProvincialInput('AT1', fed as never, divergenceDeclared as never, { isCcpc: true }),
     );
     const s13 = out.schedulePayloads?.find((p) => p.scheduleId === '013');
     const byId = new Map((s13?.values ?? []).map((v) => [v.lineItemId, v.value]));
-    expect(byId.get('013023001')).toBe(30_000); // recapture
-    expect(byId.get('013027001')).toBe(0); // no CCA can be claimed alongside recapture
+    // Filed per class (015 recapture); the 023/027 totals are printed, not filed.
+    expect(byId.get('013015001')).toBe(30_000);
+    const shown = new Map((s13?.display ?? []).map((v) => [v.lineItemId, v.value]));
+    expect(shown.get('013023001')).toBe(30_000); // recapture
+    expect(shown.get('013027001')).toBe(0); // no CCA can be claimed alongside recapture
   });
 });
 

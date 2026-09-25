@@ -554,7 +554,7 @@ export async function prepareAt1NetFile(params: PrepareAt1Params): Promise<Prepa
   if (params.forFiling) {
     try {
       assertAt1MandatoryComplete(data);
-      assertAt1SchedulesComplete(schedulePayloads);
+      assertAt1SchedulesComplete(schedulePayloads, data);
     } catch (err) {
       if (err instanceof At1MandatoryFieldMissingError) throw createError(422, err.message);
       throw err;

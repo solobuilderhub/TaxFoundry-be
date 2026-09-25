@@ -728,7 +728,8 @@ describe('runAT1Compute — Schedule 29 page 3 (the Agreement Among Associated C
     const sch29 = out.schedulePayloads?.find((s) => s.scheduleId === '029');
     const byId = new Map(sch29?.values.map((v) => [v.lineItemId, v.value]) ?? []);
     expect(byId.has('029125001')).toBe(true);
-    expect(byId.has('029112001')).toBe(false);
+    // Mandatory on both paths; "If line 100=1 … field must be $NIL" (§3.2.3.29).
+    expect(byId.get('029112001')).toBe(0);
   });
 
   it('files the agreement’s page-3 lines — header, per-member occurrences, and the claimant’s 325', () => {
@@ -879,7 +880,11 @@ describe('runAT1Compute — AT4970 + page 1 + PE-eligibility, wired from the UI 
     const byId = new Map(sch29?.values.map((v) => [v.lineItemId, v.value]) ?? []);
     expect(byId.get('029003001')).toBe(1_500_000);
     expect(byId.get('029005001')).toBe(1_000_000); // from the project row's own 105
-    expect(byId.get('029031001')).toBe(1_000_000);
+    // 031 is printed but not a Net File line (§3.2.3.29) — shown, not filed.
+    expect(byId.has('029031001')).toBe(false);
+    expect(
+      new Map((sch29?.display ?? []).map((v) => [v.lineItemId, v.value])).get('029031001'),
+    ).toBe(1_000_000);
     expect(byId.get('029040001')).toBe(2); // primaryFieldCode, coerced to a number
 
     // AT4970 is deliberately NOT filed in schedulePayloads — TRA's own spec
@@ -1564,7 +1569,12 @@ describe('AT1 S13 — the AT1-side grid is a basis of its own', () => {
       ),
     );
     const s = out.schedulePayloads?.find((p) => p.scheduleId === '013');
-    return { payload: s, byId: new Map((s?.values ?? []).map((v) => [v.lineItemId, v.value])) };
+    return {
+      payload: s,
+      byId: new Map((s?.values ?? []).map((v) => [v.lineItemId, v.value])),
+      // The printed totals 023/025/027 — shown, not filed (§3.2.3.14 has no line for them).
+      shown: new Map((s?.display ?? []).map((v) => [v.lineItemId, v.value])),
+    };
   };
 
   it('files a Schedule 13 instead of discarding the grid', () => {
@@ -1573,24 +1583,24 @@ describe('AT1 S13 — the AT1-side grid is a basis of its own', () => {
   });
 
   it('computes the claim and the closing balance from the Alberta figures alone', () => {
-    const { byId } = filed({ classes: [{ ccaClass: '8', openingUCC: 100_000 }] });
+    const { byId, shown } = filed({ classes: [{ ccaClass: '8', openingUCC: 100_000 }] });
     expect(byId.get('013003001')).toBe(100_000); // opening UCC
     expect(byId.get('013019001')).toBe(20_000); // class 8 at 20%, claiming the max
     expect(byId.get('013021001')).toBe(80_000); // closing UCC
-    expect(byId.get('013027001')).toBe(20_000); // total CCA → Schedule 12 line 004
+    expect(shown.get('013027001')).toBe(20_000); // total CCA → Schedule 12 line 004
   });
 
   it('recaptures when proceeds exceed the pool, and floors the closing balance', () => {
-    const { byId } = filed({
+    const { byId, shown } = filed({
       classes: [{ ccaClass: '8', openingUCC: 50_000, dispositions: 80_000 }],
     });
     expect(byId.get('013015001')).toBe(30_000); // recapture, reported positive
-    expect(byId.get('013023001')).toBe(30_000); // total recapture → Sch 12 line 006
+    expect(shown.get('013023001')).toBe(30_000); // total recapture → Sch 12 line 006
     expect(byId.get('013021001')).toBe(0); // not carried forward negative
   });
 
   it('carries several Alberta-only classes, each on its own occurrence', () => {
-    const { byId } = filed({
+    const { byId, shown } = filed({
       classes: [
         { ccaClass: '8', openingUCC: 100_000 },
         { ccaClass: '10', openingUCC: 50_000 },
@@ -1599,7 +1609,7 @@ describe('AT1 S13 — the AT1-side grid is a basis of its own', () => {
     expect(byId.get('013001001')).toBe('8');
     expect(byId.get('013001002')).toBe('10');
     // 8 at 20% = 20,000; 10 at 30% = 15,000.
-    expect(byId.get('013027001')).toBe(35_000);
+    expect(shown.get('013027001')).toBe(35_000);
   });
 
   it('still files nothing when neither basis carries anything', () => {

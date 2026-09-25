@@ -103,7 +103,13 @@ describe('TRA Test Case 1 — Alberta loss, CCA divergence, carry-backs', () => 
     expect(v.get('013019003')).toBe('5000'); // class 13: the full 5,000
     expect(v.get('013013003')).toBe('NA'); // "If a rate is not applicable, enter NA."
     expect(v.get('013045001')).toBe('1000000'); // class 8 immediate expensing
-    expect(v.get('013027001')).toBe('1006200');
+    // No total line on the Net File (§3.2.3.14): Schedule 12 line 004 is "the
+    // sum of all occurrences of 013019", and that is what reconciles.
+    const cca = [...v]
+      .filter(([id]) => id.startsWith('013019'))
+      .reduce((s, [, x]) => s + Number(x), 0);
+    expect(cca).toBe(1_006_200);
+    expect(v.get('012004001')).toBe('1006200');
   });
 
   it('carries back Schedule 21’s own loss on Schedule 10 (§3.2.3.11: 010002 = 021037)', () => {
@@ -201,7 +207,11 @@ describe.each([
 
   it('prorates the group limit by the longest year’s days (§3.2.3.29: $4,000,000 × line 206 ÷ 365)', () => {
     expect(v.get('029206001')).toBe('366'); // 2024 spans 29 February
-    expect(v.get('029208001')).toBe(want.limit);
+    // 208 is printed, not filed; the prorated maximum shows on the form view.
+    expect(v.has('029208001')).toBe(false);
+    const s29 = runCase(id).computed.schedulePayloads?.find((s) => s.scheduleId === '029');
+    const shown = new Map((s29?.display ?? []).map((d) => [d.lineItemId, String(d.value)]));
+    expect(shown.get('029208001')).toBe(want.limit);
   });
 
   it('keys every row of the Agreement on its Federal Business Number (line 220)', () => {
