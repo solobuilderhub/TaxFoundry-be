@@ -32,9 +32,13 @@ export function runCase(id: keyof typeof TRA_CASES): { computed: Computed; xml: 
     unknown
   >;
   const p = assembled.period as { start: string; end: string; label: string };
+  // Exactly as the product composes it (engagement-compute.service's
+  // runEngine): dates revived, then the client record's CCPC status applied.
+  // Without isCcpc here the case skipped Schedule 1 that the product files.
   const fed = {
     ...assembled,
     period: { start: new Date(p.start), end: new Date(p.end), label: p.label },
+    isCcpc: true,
   };
   const computed = runAT1Compute(
     assembleProvincialInput('AT1', fed, c.returnInput as never, { isCcpc: true }),

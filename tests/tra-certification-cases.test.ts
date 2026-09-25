@@ -146,6 +146,13 @@ describe('TRA Test Case 1 — Alberta loss, CCA divergence, carry-backs', () => 
     expect(v.get('021069001')).toBe('100000'); // 100,000 + 150,000 − 150,000
   });
 
+  it('files no Schedule 1 — a loss year has no active business income (§3.2.3.2)', () => {
+    // The T2 fixture books 981,200 before 1,001,000 of CCA. Line 400 defaulted
+    // to that book figure and Schedule 1 filed it as Alberta active business
+    // income on a return with an Alberta loss.
+    expect([...v.keys()].filter((id) => id.startsWith('001'))).toEqual([]);
+  });
+
   it('files the certification names in the spec’s order — 097 surname, 098 first name', () => {
     expect(v.get('000097001')).toBe('Whitecourt');
     expect(v.get('000098001')).toBe('Dana');
