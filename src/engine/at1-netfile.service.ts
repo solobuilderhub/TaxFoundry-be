@@ -17,6 +17,7 @@ import {
   At1TaxPayableMismatchError,
   type At1TransmitterInfo,
   assertAt1MandatoryComplete,
+  assertAt1SchedulesComplete,
   renderAt1NetFile,
 } from '@classytic/ca-tax/t2';
 import { createError } from '@classytic/repo-core/errors';
@@ -407,8 +408,13 @@ export function composeAt1FilingData(src: ComposeSources): At1FilingData {
     natureOfBusiness: str(frozen?.natureOfBusiness ?? live(src.client.natureOfBusiness)),
     typeOfCorporation: str(frozen?.typeOfCorporation ?? live(src.client.typeOfCorporation)),
     authorizedEmail: str(frozen?.authorizedEmail ?? live(src.client.authorizedEmail)),
+    // Nothing freezes a certification telephone of its own; the draft path has
+    // always used the contact telephone, so filing reads the FROZEN copy of it.
+    // Reading only `frozen.certificationTelephone` left 103 blank on every filing.
     certificationTelephone: str(
-      frozen?.certificationTelephone ?? live(src.client.contactTelephone),
+      frozen?.certificationTelephone ??
+        frozen?.contactTelephone ??
+        live(src.client.contactTelephone),
     ),
     // 000101 — the date the return is certified, which is now, not the year end.
     certificationDate: new Date(),
@@ -548,6 +554,7 @@ export async function prepareAt1NetFile(params: PrepareAt1Params): Promise<Prepa
   if (params.forFiling) {
     try {
       assertAt1MandatoryComplete(data);
+      assertAt1SchedulesComplete(schedulePayloads);
     } catch (err) {
       if (err instanceof At1MandatoryFieldMissingError) throw createError(422, err.message);
       throw err;

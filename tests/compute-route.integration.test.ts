@@ -607,6 +607,11 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
         name: 'TaxFoundry Test Corp',
         corporateAccountNumber: '123456789',
         address: { street: '9811 109 St', city: 'Edmonton', province: 'AB', postalCode: 'T5K 2L5' },
+        contactPerson: 'Sam Preparer',
+        contactTelephone: '7805550111',
+        natureOfBusiness: '5417',
+        typeOfCorporation: '1',
+        authorizedEmail: 'sam@taxfoundry.test',
       },
     });
     const clientId = (clientRes.json().data ?? clientRes.json())._id;
@@ -633,7 +638,24 @@ describe('POST /engagement-years/:id/compute (DB-backed)', () => {
         activeBusinessIncome: 195000,
         // Frozen onto the computed return, which is what the transmit path
         // reads — the transmit action itself carries no returnInput.
-        returnInput: { edi: EDI_FILER },
+        // The answered AT1 jacket — mandatory without a default, and enforced
+        // on the transmit path itself.
+        returnInput: {
+          edi: EDI_FILER,
+          alberta: {
+            grossRevenue: 400_000,
+            totalAssets: 50_000,
+            associatedWithCcpcs: 'no',
+            windUpOfSubsidiary: 'no',
+            firstYearAfterAmalgamation: 'no',
+            taxYearEndChanged: 'no',
+            finalReturn: 'no',
+            transferOfProperty: 'no',
+            reportsDifferentAlbertaIncome: 'no',
+            electsDifferentDiscretionaryAmounts: 'no',
+            preparedByTaxPreparerForFee: 'yes',
+          },
+        },
       },
     });
     return engId;

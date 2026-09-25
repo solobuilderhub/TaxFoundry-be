@@ -15,7 +15,11 @@
  * whole loss; and every schedule date went out as YYYY-MM-DD instead of the
  * eight-character YYYYMMDD.
  */
-import { assertAt1MandatoryComplete, validateAt1Transmitter } from '@classytic/ca-tax/t2';
+import {
+  assertAt1MandatoryComplete,
+  assertAt1SchedulesComplete,
+  validateAt1Transmitter,
+} from '@classytic/ca-tax/t2';
 import { describe, expect, it } from 'vitest';
 import { runCase } from '../scripts/validate/tra-cases.js';
 import { assembleProvincialInput } from '../src/engine/assemble-provincial-input.js';
@@ -198,5 +202,20 @@ describe.each([
   it('prorates the group limit by the longest year’s days (§3.2.3.29: $4,000,000 × line 206 ÷ 365)', () => {
     expect(v.get('029206001')).toBe('366'); // 2024 spans 29 February
     expect(v.get('029208001')).toBe(want.limit);
+  });
+
+  it('keys every row of the Agreement on its Federal Business Number (line 220)', () => {
+    // Rows without 220 came back from TRA as 10030 "duplicate line items".
+    for (let n = 1; v.has(`029240${String(n).padStart(3, '0')}`); n++) {
+      expect(v.get(`029220${String(n).padStart(3, '0')}`)).toMatch(/^\d{9}(RC\d{4})?$/);
+    }
+    expect(() =>
+      assertAt1SchedulesComplete((runCase(id).computed.schedulePayloads ?? []) as never),
+    ).not.toThrow();
+  });
+
+  it('files the claimant’s own limit at 102 and 108 (§3.2.3.29: 108 = 102 = its line 240)', () => {
+    expect(v.get('029102001')).toBe(v.get('029240001'));
+    expect(v.get('029108001')).toBe(v.get('029240001'));
   });
 });

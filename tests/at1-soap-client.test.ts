@@ -52,7 +52,8 @@ const SAMPLE_SUCCESS = `<S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-enve
   </S:Body>
 </S:Envelope>`;
 
-const PAYLOAD = '<?xml version="1.0" encoding="ISO-8859-1"?>\n<ReturnSubmission><Return/></ReturnSubmission>';
+const PAYLOAD =
+  '<?xml version="1.0" encoding="ISO-8859-1"?>\n<ReturnSubmission><Return/></ReturnSubmission>';
 
 const okResponse = (body: string) =>
   new Response(body, { status: 200, headers: { 'Content-Type': 'application/soap+xml' } });
@@ -110,6 +111,17 @@ describe('reading TRA’s response', () => {
     expect(r.errorCodes).toEqual(['20070', '20110']);
   });
 
+  it('reads a 1xxxx rejection, as TRA’s test site actually sent one', () => {
+    // Verbatim from the certification host, 2026-09-25. The 1xxxx band was read
+    // as unrecognised, so the preparer saw NO_RECOGNISED_RESPONSE, not the reason.
+    const live =
+      '<?xml version=\'1.0\' encoding=\'UTF-8\'?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope"><S:Body><ns0:fileReturnResponse xmlns:ns0="http://cit.tra.fin.goa/" xmlns:ns1="http://goa/tra/fin/cit/CITWebService.wsdl/types/"><return><ns1:code>10030</ns1:code><ns1:type>This return contains duplicate line items. Please contact the developer of your software.</ns1:type></return></ns0:fileReturnResponse></S:Body></S:Envelope>';
+    const r = interpretFileReturnResponse(parseFileReturnResponse(live));
+    expect(r.status).toBe('rejected');
+    expect(r.errorCodes).toEqual(['10030']);
+    expect(r.errorMessages[0]).toMatch(/^10030: This return contains duplicate line items/);
+  });
+
   it('does NOT accept a confirmation number without a 30002', () => {
     // A partial response is not a filing. Accepting on 30001 alone would record
     // a return as transmitted on the strength of a number TRA never confirmed.
@@ -127,7 +139,10 @@ describe('reading TRA’s response', () => {
 
 describe('At1SoapClient over the wire', () => {
   const client = (impl: typeof fetch) =>
-    new At1SoapClient({ endpoint: 'https://tra.example/CITReturnFilingSoap12HttpPort', fetchImpl: impl });
+    new At1SoapClient({
+      endpoint: 'https://tra.example/CITReturnFilingSoap12HttpPort',
+      fetchImpl: impl,
+    });
 
   it('posts SOAP 1.2 with the right content type', async () => {
     let seen: { url?: string; init?: RequestInit } = {};
@@ -170,7 +185,8 @@ describe('At1SoapClient over the wire', () => {
   });
 
   it('THROWS on a non-200, which is transport rather than a filing decision', async () => {
-    const fake = (async () => new Response('gateway timeout', { status: 504 })) as unknown as typeof fetch;
+    const fake = (async () =>
+      new Response('gateway timeout', { status: 504 })) as unknown as typeof fetch;
     await expect(client(fake).transmit(PAYLOAD)).rejects.toThrow(/HTTP 504[\s\S]*UNKNOWN/);
   });
 });

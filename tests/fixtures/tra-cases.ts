@@ -211,6 +211,7 @@ const tc2 = {
       agreementMembers: [
         {
           name: 'Aurora Innovations Ltd.',
+          fbn: '813574269RC0001',
           albertaCan: '424102960',
           currentTaxationYearEnd: '2024-12-31',
           allocatedExpenditureLimit: 3_000_000,
@@ -223,6 +224,7 @@ const tc2 = {
         },
         {
           name: 'Associated Co.',
+          fbn: '700100209RC0001',
           albertaCan: '700100200',
           currentTaxationYearEnd: '2024-06-30',
           allocatedExpenditureLimit: 1_000_000,
@@ -248,8 +250,12 @@ const tc3Member = (
   prior2: number,
   capital: number,
   albertaPe: 'yes' | 'no',
+  fbn: string,
 ) => ({
   name,
+  // Line 220 keys every row of page 3 — the case text gives none for the
+  // associates, so each carries a check-digit-valid placeholder.
+  fbn,
   albertaCan: can,
   currentTaxationYearEnd: yearEnd,
   allocatedExpenditureLimit: limit,
@@ -324,6 +330,7 @@ const tc3 = {
           600_000,
           10_000_000,
           'yes',
+          '926318475RC0001',
         ),
         tc3Member(
           'Corporation B',
@@ -335,6 +342,7 @@ const tc3 = {
           500_000,
           3_000_000,
           'yes',
+          '700200306RC0001',
         ),
         tc3Member(
           'Corporation C',
@@ -346,8 +354,20 @@ const tc3 = {
           0,
           5_000_000,
           'no',
+          '700300403RC0001',
         ),
-        tc3Member('Corporation D', '700400500', '2024-03-31', 0, 0, 0, 0, 2_000_000, 'no'),
+        tc3Member(
+          'Corporation D',
+          '700400500',
+          '2024-03-31',
+          0,
+          0,
+          0,
+          0,
+          2_000_000,
+          'no',
+          '700400500RC0001',
+        ),
       ],
     },
   },

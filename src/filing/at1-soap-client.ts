@@ -33,7 +33,8 @@
  *   30001  confirmation number          30004  Alberta corporate account number
  *   30002  "Return Successfully Filed."  30005  taxation year end
  *   30003  the message to show the filer
- *   2xxxx  an error — the return was NOT filed
+ *   1xxxx  an error — format, mandatory items, duplicates; NOT filed
+ *   2xxxx  an error — filer details and business rules; NOT filed
  *
  * So a 200 is not success and must never be read as one. Acceptance is the
  * presence of a **30002**, and the confirmation number is the **30001** value.
@@ -45,8 +46,12 @@ import type { At1FilingGateway, At1TransmitResult } from './at1-gateway.js';
 const CODE_CONFIRMATION_NUMBER = '30001';
 const CODE_SUCCESSFULLY_FILED = '30002';
 
-/** Anything in the 2xxxx band is a rejection with a reason. */
-const isErrorCode = (code: string): boolean => /^2\d{4}$/.test(code);
+/**
+ * A rejection with a reason: the 1xxxx band (format, mandatory items,
+ * duplicates — §3.3.14) as well as 2xxxx (filer and business rules). Reading
+ * only 2xxxx turned a real `10030` into "no recognised response".
+ */
+const isErrorCode = (code: string): boolean => /^[12]\d{4}$/.test(code);
 
 export interface At1SoapClientOptions {
   /** Full endpoint URL, e.g. `https://host/CITNetFile-…/CITReturnFilingSoap12HttpPort`. */

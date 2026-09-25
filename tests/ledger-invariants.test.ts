@@ -19,27 +19,28 @@
  * data actually behaves the way the routing implies — the two together are the
  * control, and neither alone is.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import mongoose from 'mongoose';
-import { createTestApp } from '@classytic/arc/testing';
+
 import type { TestAppContext, TestAuthProvider } from '@classytic/arc/testing';
+import { createTestApp } from '@classytic/arc/testing';
 import { CORP_TAX_2024 } from '@classytic/ca-tax/t2';
-import clientResource from '../src/resources/engagement/client/client.resource.js';
-import engagementYearResource from '../src/resources/engagement/engagement-year/engagement-year.resource.js';
-import factLogResource from '../src/resources/ledger/fact-log/fact-log.resource.js';
-import proposalResource from '../src/resources/ledger/proposal/proposal.resource.js';
-import computedReturnResource from '../src/resources/ledger/computed-return/computed-return.resource.js';
-import reviewMemoResource from '../src/resources/workpapers/review-memo/review-memo.resource.js';
-import filingRecordResource from '../src/resources/workpapers/filing-record/filing-record.resource.js';
-import FactLog from '../src/resources/ledger/fact-log/fact-log.model.js';
-import Proposal from '../src/resources/ledger/proposal/proposal.model.js';
-import ComputedReturn from '../src/resources/ledger/computed-return/computed-return.model.js';
-import EngagementYear from '../src/resources/engagement/engagement-year/engagement-year.model.js';
-import FilingRecord from '../src/resources/workpapers/filing-record/filing-record.model.js';
-import ReviewMemo from '../src/resources/workpapers/review-memo/review-memo.model.js';
-import Client from '../src/resources/engagement/client/client.model.js';
-import { setAt1FilingGateway } from '../src/filing/at1-gateway.js';
+import mongoose from 'mongoose';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { registerFederalRates, resetRateBooks } from '../src/engine/tax-rates.js';
+import { setAt1FilingGateway } from '../src/filing/at1-gateway.js';
+import Client from '../src/resources/engagement/client/client.model.js';
+import clientResource from '../src/resources/engagement/client/client.resource.js';
+import EngagementYear from '../src/resources/engagement/engagement-year/engagement-year.model.js';
+import engagementYearResource from '../src/resources/engagement/engagement-year/engagement-year.resource.js';
+import ComputedReturn from '../src/resources/ledger/computed-return/computed-return.model.js';
+import computedReturnResource from '../src/resources/ledger/computed-return/computed-return.resource.js';
+import FactLog from '../src/resources/ledger/fact-log/fact-log.model.js';
+import factLogResource from '../src/resources/ledger/fact-log/fact-log.resource.js';
+import Proposal from '../src/resources/ledger/proposal/proposal.model.js';
+import proposalResource from '../src/resources/ledger/proposal/proposal.resource.js';
+import FilingRecord from '../src/resources/workpapers/filing-record/filing-record.model.js';
+import filingRecordResource from '../src/resources/workpapers/filing-record/filing-record.resource.js';
+import ReviewMemo from '../src/resources/workpapers/review-memo/review-memo.model.js';
+import reviewMemoResource from '../src/resources/workpapers/review-memo/review-memo.resource.js';
 
 const FIRM_A = '64f000000000000000000011';
 const FIRM_B = '64f000000000000000000012';
@@ -86,8 +87,31 @@ const EDI_FILER = {
   addressCountry: 'CA',
 };
 
+/**
+ * The AT1 jacket's answered questions and amounts — mandatory with no safe
+ * default, and enforced on the transmit path itself. Without them every
+ * transmission here is refused as incomplete before the guard under test runs.
+ */
+const AT1_JACKET = {
+  grossRevenue: 400_000,
+  totalAssets: 50_000,
+  associatedWithCcpcs: 'no',
+  windUpOfSubsidiary: 'no',
+  firstYearAfterAmalgamation: 'no',
+  taxYearEndChanged: 'no',
+  finalReturn: 'no',
+  transferOfProperty: 'no',
+  reportsDifferentAlbertaIncome: 'no',
+  electsDifferentDiscretionaryAmounts: 'no',
+  preparedByTaxPreparerForFee: 'yes',
+};
+
 const RETURN_INPUT = {
-  identification: { corpType: 'CCPC', province: 'ON', headOffice: { line1: '1 King St', city: 'Toronto' } },
+  identification: {
+    corpType: 'CCPC',
+    province: 'ON',
+    headOffice: { line1: '1 King St', city: 'Toronto' },
+  },
   balanceSheet: { cash: 50000, accountsPayable: 50000 },
   incomeStatement: { revenue: 400000, costOfSales: 100000 },
   gifiNotes: { preparedByAccountant: true },
@@ -126,15 +150,31 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
 
     await Client.create([
       {
-        _id: CLIENT_A, name: 'Firm A Client Ltd', corpType: 'CCPC', businessNumber: '100000101RC0001',
+        _id: CLIENT_A,
+        name: 'Firm A Client Ltd',
+        corpType: 'CCPC',
+        businessNumber: '100000101RC0001',
         // A COMPLETE Alberta filing identity — without the mailing address the
         // renderer refuses to generate at all (critical mandatory fields), which
         // would mask the provenance guard behind an earlier failure.
         corporateAccountNumber: '123456789',
         address: { street: '9811 109 St', city: 'Edmonton', province: 'AB', postalCode: 'T5K 2L5' },
-        organizationId: FIRM_A, createdBy: MANAGER,
+        contactPerson: 'Jane Officer',
+        contactTelephone: '7805550111',
+        natureOfBusiness: '5417',
+        typeOfCorporation: '1',
+        authorizedEmail: 'jane@firm-a.test',
+        organizationId: FIRM_A,
+        createdBy: MANAGER,
       },
-      { _id: CLIENT_B, name: 'Firm B Client Ltd', corpType: 'CCPC', businessNumber: '100000202RC0001', organizationId: FIRM_B, createdBy: RIVAL },
+      {
+        _id: CLIENT_B,
+        name: 'Firm B Client Ltd',
+        corpType: 'CCPC',
+        businessNumber: '100000202RC0001',
+        organizationId: FIRM_B,
+        createdBy: RIVAL,
+      },
     ]);
 
     setAt1FilingGateway({
@@ -146,9 +186,18 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
 
     if (!ctx.auth) throw new Error('test auth provider not configured');
     auth = ctx.auth;
-    auth.register('manager', { user: { id: MANAGER, role: 'user', organizationId: FIRM_A, orgRoles: ['manager'] }, orgId: FIRM_A });
-    auth.register('member', { user: { id: MEMBER, role: 'user', organizationId: FIRM_A, orgRoles: ['member'] }, orgId: FIRM_A });
-    auth.register('rival', { user: { id: RIVAL, role: 'user', organizationId: FIRM_B, orgRoles: ['manager'] }, orgId: FIRM_B });
+    auth.register('manager', {
+      user: { id: MANAGER, role: 'user', organizationId: FIRM_A, orgRoles: ['manager'] },
+      orgId: FIRM_A,
+    });
+    auth.register('member', {
+      user: { id: MEMBER, role: 'user', organizationId: FIRM_A, orgRoles: ['member'] },
+      orgId: FIRM_A,
+    });
+    auth.register('rival', {
+      user: { id: RIVAL, role: 'user', organizationId: FIRM_B, orgRoles: ['manager'] },
+      orgId: FIRM_B,
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -168,13 +217,22 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       method: 'POST',
       url: '/engagement-years',
       headers: auth.as(role).headers,
-      payload: { clientId, program, taxYearStart: '2024-01-01T00:00:00.000Z', taxYearEnd: '2024-12-31T00:00:00.000Z' },
+      payload: {
+        clientId,
+        program,
+        taxYearStart: '2024-01-01T00:00:00.000Z',
+        taxYearEnd: '2024-12-31T00:00:00.000Z',
+      },
     });
     expect(res.statusCode).toBe(201);
     return String(unwrap(res)._id);
   }
 
-  async function compute(engId: string, payload: Record<string, unknown>, role: 'manager' | 'rival' = 'manager') {
+  async function compute(
+    engId: string,
+    payload: Record<string, unknown>,
+    role: 'manager' | 'rival' = 'manager',
+  ) {
     return ctx.app.inject({
       method: 'POST',
       url: `/engagement-years/${engId}/action`,
@@ -192,10 +250,12 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       activeBusinessIncome: 195000,
       // Frozen onto the computed return, which is what the transmit path reads
       // — the transmit action itself carries no returnInput.
-      returnInput: { edi: EDI_FILER },
+      returnInput: { edi: EDI_FILER, alberta: AT1_JACKET },
     });
     expect(res.statusCode).toBe(200);
-    const cr = await ComputedReturn.findOne({ engagementYearId: engId }).sort({ createdAt: -1 }).lean();
+    const cr = await ComputedReturn.findOne({ engagementYearId: engId })
+      .sort({ createdAt: -1 })
+      .lean();
     const memo = await ReviewMemo.create({
       engagementYearId: engId,
       computedReturnId: cr!._id,
@@ -205,12 +265,23 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       createdBy: MANAGER,
     });
     await ctx.app.inject({
-      method: 'POST', url: `/review-memos/${memo._id}/action`,
-      headers: auth.as('manager').headers, payload: { action: 'sign-off' },
+      method: 'POST',
+      url: `/review-memos/${memo._id}/action`,
+      headers: auth.as('manager').headers,
+      payload: { action: 'sign-off' },
     });
     await ctx.app.inject({
-      method: 'POST', url: `/engagement-years/${engId}/action`, headers: auth.as('manager').headers,
-      payload: { action: 'authorize-t183', officerName: 'Jane Officer', officerPosition: 'President', signedAt: new Date(Date.now() - 60_000).toISOString(), authorizationMethod: 'electronic_signature', evidenceRef: 'T183CORP.pdf' },
+      method: 'POST',
+      url: `/engagement-years/${engId}/action`,
+      headers: auth.as('manager').headers,
+      payload: {
+        action: 'authorize-t183',
+        officerName: 'Jane Officer',
+        officerPosition: 'President',
+        signedAt: new Date(Date.now() - 60_000).toISOString(),
+        authorizationMethod: 'electronic_signature',
+        evidenceRef: 'T183CORP.pdf',
+      },
     });
     return engId;
   }
@@ -236,18 +307,29 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
         method: 'POST',
         url: `/engagement-years/${engId}/action`,
         headers: auth.as('manager').headers,
-        payload: { action: 'authorize-t183', officerName: 'Jane Officer', officerPosition: 'President', ...extra },
+        payload: {
+          action: 'authorize-t183',
+          officerName: 'Jane Officer',
+          officerPosition: 'President',
+          ...extra,
+        },
       });
     };
 
     it('refuses when the signing moment was not observed', async () => {
-      const res = await authorize({ authorizationMethod: 'electronic_signature', evidenceRef: 'T183.pdf' });
+      const res = await authorize({
+        authorizationMethod: 'electronic_signature',
+        evidenceRef: 'T183.pdf',
+      });
       expect(res.statusCode).toBe(400);
       expect(res.body).toContain('signedAt is required');
     });
 
     it('refuses when the method was not stated — it does not assume a signature', async () => {
-      const res = await authorize({ signedAt: new Date(Date.now() - 60_000).toISOString(), evidenceRef: 'T183.pdf' });
+      const res = await authorize({
+        signedAt: new Date(Date.now() - 60_000).toISOString(),
+        evidenceRef: 'T183.pdf',
+      });
       expect(res.statusCode).toBe(400);
       expect(res.body).toContain('authorizationMethod is required');
     });
@@ -286,10 +368,16 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
     it('survives every mutating verb byte-for-byte, and never grows an updatedAt', async () => {
       const engId = await newEngagement('manager', 'T2');
       const create = await ctx.app.inject({
-        method: 'POST', url: '/fact-logs', headers: auth.as('manager').headers,
+        method: 'POST',
+        url: '/fact-logs',
+        headers: auth.as('manager').headers,
         payload: {
-          engagementYearId: engId, seq: 1, type: 'HumanOverride', actor: MANAGER,
-          provenance: 'human', reason: 'reclassified meals to 50% deductible',
+          engagementYearId: engId,
+          seq: 1,
+          type: 'HumanOverride',
+          actor: MANAGER,
+          provenance: 'human',
+          reason: 'reclassified meals to 50% deductible',
           payload: { line: 'schedule1.meals', before: 12000, after: 6000 },
         },
       });
@@ -304,7 +392,9 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
 
       for (const method of ['PATCH', 'PUT', 'DELETE'] as const) {
         const res = await ctx.app.inject({
-          method, url: `/fact-logs/${factId}`, headers: auth.as('manager').headers,
+          method,
+          url: `/fact-logs/${factId}`,
+          headers: auth.as('manager').headers,
           payload: { reason: 'tampered', provenance: 'human' },
         });
         expect(res.statusCode, `${method} must not be a route on an append-only ledger`).toBe(404);
@@ -318,10 +408,16 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
     it('refuses a fact whose provenance is a model — the enum is the wall', async () => {
       const engId = await newEngagement('manager', 'T2');
       const res = await ctx.app.inject({
-        method: 'POST', url: '/fact-logs', headers: auth.as('manager').headers,
+        method: 'POST',
+        url: '/fact-logs',
+        headers: auth.as('manager').headers,
         payload: {
-          engagementYearId: engId, seq: 1, type: 'AdjustmentComputed', actor: 'agent:assistant',
-          provenance: 'model', reason: 'the model thinks this is right',
+          engagementYearId: engId,
+          seq: 1,
+          type: 'AdjustmentComputed',
+          actor: 'agent:assistant',
+          provenance: 'model',
+          reason: 'the model thinks this is right',
         },
       });
       expect(res.statusCode).toBeGreaterThanOrEqual(400);
@@ -342,7 +438,9 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
 
       // Discard the cache outright — through the API, as an operator would.
       const del = await ctx.app.inject({
-        method: 'DELETE', url: `/computed-returns/${id1}`, headers: auth.as('manager').headers,
+        method: 'DELETE',
+        url: `/computed-returns/${id1}`,
+        headers: auth.as('manager').headers,
       });
       expect(del.statusCode).toBeLessThan(300);
       expect(await ComputedReturn.findById(id1).lean()).toBeNull();
@@ -369,8 +467,10 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       const res = await compute(engId, { returnInput: RETURN_INPUT });
       const id = String(unwrap(res).computedReturnId);
       const patch = await ctx.app.inject({
-        method: 'PATCH', url: `/computed-returns/${id}`,
-        headers: auth.as('manager').headers, payload: { totals: { totalOwing: 1 } },
+        method: 'PATCH',
+        url: `/computed-returns/${id}`,
+        headers: auth.as('manager').headers,
+        payload: { totals: { totalOwing: 1 } },
       });
       expect(patch.statusCode).toBe(404);
       const cr = await ComputedReturn.findById(id).lean();
@@ -388,15 +488,19 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       // Tamper below the application — a raw collection write, bypassing both the
       // absent update route and the schema enum. This is the threat model: the
       // guard must not depend on the write path having been honest.
-      const cr = await ComputedReturn.findOne({ engagementYearId: engId }).sort({ createdAt: -1 }).lean();
+      const cr = await ComputedReturn.findOne({ engagementYearId: engId })
+        .sort({ createdAt: -1 })
+        .lean();
       const poked = await mongoose.connection
         .collection('computedreturns')
         .updateOne({ _id: cr!._id }, { $set: { 'fields.0.provenance': 'model' } });
       expect(poked.modifiedCount).toBe(1);
 
       const res = await ctx.app.inject({
-        method: 'POST', url: `/engagement-years/${engId}/action`,
-        headers: auth.as('manager').headers, payload: { action: 'transmit', certification },
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
+        payload: { action: 'transmit', certification },
       });
 
       expect(res.statusCode).toBeGreaterThanOrEqual(400);
@@ -412,8 +516,10 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       const engId = await readyToTransmit();
       egressed = null;
       const res = await ctx.app.inject({
-        method: 'POST', url: `/engagement-years/${engId}/action`,
-        headers: auth.as('manager').headers, payload: { action: 'transmit', certification },
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
+        payload: { action: 'transmit', certification },
       });
       expect(res.statusCode).toBe(200);
       expect(egressed).toContain('<Value LineItemID=');
@@ -425,20 +531,25 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       // DISALLOW generation when a critical mandatory field is absent — so the
       // failure is correct, but it is a 422 naming the empty boxes, not a 500.
       const bare = await ctx.app.inject({
-        method: 'POST', url: '/clients', headers: auth.as('manager').headers,
+        method: 'POST',
+        url: '/clients',
+        headers: auth.as('manager').headers,
         payload: { name: 'No Address Ltd', businessNumber: '100000303RC0001', corpType: 'CCPC' },
       });
       const clientId = String(unwrap(bare)._id);
       const engId = await newEngagement('manager', 'AT1', clientId);
       await compute(engId, {
         period: { start: '2024-01-01', end: '2024-12-31', label: '2024' },
-        federalTaxableIncome: 100000, activeBusinessIncome: 100000,
+        federalTaxableIncome: 100000,
+        activeBusinessIncome: 100000,
       });
       egressed = null;
 
       const res = await ctx.app.inject({
-        method: 'POST', url: `/engagement-years/${engId}/action`,
-        headers: auth.as('manager').headers, payload: { action: 'prepare-netfile', certification },
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
+        payload: { action: 'prepare-netfile', certification },
       });
       expect(res.statusCode).toBe(422);
       // The message must name the fields, or the preparer cannot act on it.
@@ -458,8 +569,10 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       const owingBefore = (cr1!.totals as { totalOwing: number }).totalOwing;
 
       const check1 = await ctx.app.inject({
-        method: 'POST', url: `/engagement-years/${engId}/action`,
-        headers: auth.as('manager').headers, payload: { action: 'verify-reproducible' },
+        method: 'POST',
+        url: `/engagement-years/${engId}/action`,
+        headers: auth.as('manager').headers,
+        payload: { action: 'verify-reproducible' },
       });
       expect(unwrap(check1).reproducible).toBe(true);
 
@@ -478,8 +591,10 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
         // return still reproduces — a changed book must not masquerade as an
         // irreproducible filing.
         const check2 = await ctx.app.inject({
-          method: 'POST', url: `/engagement-years/${engId}/action`,
-          headers: auth.as('manager').headers, payload: { action: 'verify-reproducible' },
+          method: 'POST',
+          url: `/engagement-years/${engId}/action`,
+          headers: auth.as('manager').headers,
+          payload: { action: 'verify-reproducible' },
         });
         const out = unwrap(check2);
         expect(out.reproducible).toBe(true);
@@ -511,10 +626,15 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
     it('accepts a proposal carrying model metadata', async () => {
       const engId = await newEngagement('manager', 'T2');
       const res = await ctx.app.inject({
-        method: 'POST', url: '/proposals', headers: auth.as('manager').headers,
+        method: 'POST',
+        url: '/proposals',
+        headers: auth.as('manager').headers,
         payload: {
-          engagementYearId: engId, kind: 'gifi-mapping', source: 'agent:gifi-mapper@3',
-          confidence: 0.62, payload: { account: 'Meals & entertainment', suggestedGifi: '8523' },
+          engagementYearId: engId,
+          kind: 'gifi-mapping',
+          source: 'agent:gifi-mapper@3',
+          confidence: 0.62,
+          payload: { account: 'Meals & entertainment', suggestedGifi: '8523' },
         },
       });
       expect(res.statusCode).toBe(201);
@@ -528,9 +648,13 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
     it('refuses a computed return whose field claims model provenance', async () => {
       const engId = await newEngagement('manager', 'T2');
       const res = await ctx.app.inject({
-        method: 'POST', url: '/computed-returns', headers: auth.as('manager').headers,
+        method: 'POST',
+        url: '/computed-returns',
+        headers: auth.as('manager').headers,
         payload: {
-          engagementYearId: engId, program: 'T2', engineVersion: 'forged@1',
+          engagementYearId: engId,
+          program: 'T2',
+          engineVersion: 'forged@1',
           fields: [{ line: '300', value: 999999, provenance: 'model' }],
         },
       });
@@ -546,17 +670,23 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       expect(fields.length).toBeGreaterThan(0);
       expect(fields.every((f) => f.provenance === 'engine')).toBe(true);
       // …and no fact anywhere in the ledger claims otherwise.
-      expect(await FactLog.countDocuments({ provenance: { $nin: ['engine', 'imported', 'human'] } })).toBe(0);
+      expect(
+        await FactLog.countDocuments({ provenance: { $nin: ['engine', 'imported', 'human'] } }),
+      ).toBe(0);
     }, 30_000);
 
     it('computing and transmitting need an elevated human, not merely a seat in the org', async () => {
       const engId = await newEngagement('manager', 'T2');
       for (const action of ['compute', 'transmit'] as const) {
         const res = await ctx.app.inject({
-          method: 'POST', url: `/engagement-years/${engId}/action`,
-          headers: auth.as('member').headers, payload: { action, returnInput: RETURN_INPUT, certification },
+          method: 'POST',
+          url: `/engagement-years/${engId}/action`,
+          headers: auth.as('member').headers,
+          payload: { action, returnInput: RETURN_INPUT, certification },
         });
-        expect([401, 403], `${action} must not be open to an ordinary member`).toContain(res.statusCode);
+        expect([401, 403], `${action} must not be open to an ordinary member`).toContain(
+          res.statusCode,
+        );
       }
     }, 30_000);
   });
@@ -570,21 +700,38 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
 
       const mk = (role: 'manager' | 'rival', engId: string, seq: number) =>
         ctx.app.inject({
-          method: 'POST', url: '/fact-logs', headers: auth.as(role).headers,
-          payload: { engagementYearId: engId, seq, type: 'ReviewSignedOff', actor: role, provenance: 'human', reason: `${role} fact` },
+          method: 'POST',
+          url: '/fact-logs',
+          headers: auth.as(role).headers,
+          payload: {
+            engagementYearId: engId,
+            seq,
+            type: 'ReviewSignedOff',
+            actor: role,
+            provenance: 'human',
+            reason: `${role} fact`,
+          },
         });
       const factA = String(unwrap(await mk('manager', engA, 900))._id);
       await mk('rival', engB, 900);
 
       // The rival's list contains only the rival's rows.
-      const list = await ctx.app.inject({ method: 'GET', url: '/fact-logs', headers: auth.as('rival').headers });
+      const list = await ctx.app.inject({
+        method: 'GET',
+        url: '/fact-logs',
+        headers: auth.as('rival').headers,
+      });
       expect(list.statusCode).toBe(200);
-      const rows = ((list.json().data ?? list.json()) as { organizationId: string }[]);
+      const rows = (list.json().data ?? list.json()) as { organizationId: string }[];
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((r) => String(r.organizationId) === FIRM_B)).toBe(true);
 
       // A known id from the other firm is not fetchable even when guessed exactly.
-      const direct = await ctx.app.inject({ method: 'GET', url: `/fact-logs/${factA}`, headers: auth.as('rival').headers });
+      const direct = await ctx.app.inject({
+        method: 'GET',
+        url: `/fact-logs/${factA}`,
+        headers: auth.as('rival').headers,
+      });
       expect(direct.statusCode).toBe(404);
 
       // Nor is the other firm's engagement computable.
@@ -593,8 +740,17 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
 
       // A forged organizationId on write is overwritten by the caller's real one.
       const forged = await ctx.app.inject({
-        method: 'POST', url: '/fact-logs', headers: auth.as('rival').headers,
-        payload: { engagementYearId: engB, seq: 901, type: 'HumanOverride', actor: RIVAL, provenance: 'human', organizationId: FIRM_A },
+        method: 'POST',
+        url: '/fact-logs',
+        headers: auth.as('rival').headers,
+        payload: {
+          engagementYearId: engB,
+          seq: 901,
+          type: 'HumanOverride',
+          actor: RIVAL,
+          provenance: 'human',
+          organizationId: FIRM_A,
+        },
       });
       expect(forged.statusCode).toBe(201);
       const stored = await FactLog.findById(String(unwrap(forged)._id)).lean();
@@ -608,10 +764,20 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
     it('keeps the agent’s claim and the human’s resolution on one row', async () => {
       const engId = await newEngagement('manager', 'T2');
       const created = await ctx.app.inject({
-        method: 'POST', url: '/proposals', headers: auth.as('manager').headers,
+        method: 'POST',
+        url: '/proposals',
+        headers: auth.as('manager').headers,
         payload: {
-          engagementYearId: engId, kind: 'adjustment', source: 'agent:schedule1-reviewer@7', confidence: 0.41,
-          payload: { line: 'schedule1.meals', observed: 12000, suggested: 6000, basis: 'ITA 67.1 — 50% limitation' },
+          engagementYearId: engId,
+          kind: 'adjustment',
+          source: 'agent:schedule1-reviewer@7',
+          confidence: 0.41,
+          payload: {
+            line: 'schedule1.meals',
+            observed: 12000,
+            suggested: 6000,
+            basis: 'ITA 67.1 — 50% limitation',
+          },
         },
       });
       expect(created.statusCode).toBe(201);
@@ -619,7 +785,9 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
 
       const resolvedAt = new Date().toISOString();
       const resolve = await ctx.app.inject({
-        method: 'PATCH', url: `/proposals/${proposalId}`, headers: auth.as('manager').headers,
+        method: 'PATCH',
+        url: `/proposals/${proposalId}`,
+        headers: auth.as('manager').headers,
         payload: { status: 'rejected', resolvedBy: MANAGER, resolvedAt },
       });
       expect(resolve.statusCode).toBe(200);
@@ -638,8 +806,16 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
     it('a rejected suggestion changes nothing in the ledger, and an accepted one is booked as human', async () => {
       const engId = await newEngagement('manager', 'T2');
       await ctx.app.inject({
-        method: 'POST', url: '/proposals', headers: auth.as('manager').headers,
-        payload: { engagementYearId: engId, kind: 'adjustment', source: 'agent:x@1', confidence: 0.9, payload: { line: '300', suggested: 1 } },
+        method: 'POST',
+        url: '/proposals',
+        headers: auth.as('manager').headers,
+        payload: {
+          engagementYearId: engId,
+          kind: 'adjustment',
+          source: 'agent:x@1',
+          confidence: 0.9,
+          payload: { line: '300', suggested: 1 },
+        },
       });
       // A proposal on its own never touches the fold.
       expect(await FactLog.countDocuments({ engagementYearId: engId })).toBe(0);
@@ -647,9 +823,15 @@ describe('Return ledger — the seven audit invariants (DB-backed)', () => {
       // Acceptance is a human act, and it is booked as one — the agent's
       // confidence does not travel with the value.
       const fact = await ctx.app.inject({
-        method: 'POST', url: '/fact-logs', headers: auth.as('manager').headers,
+        method: 'POST',
+        url: '/fact-logs',
+        headers: auth.as('manager').headers,
         payload: {
-          engagementYearId: engId, seq: 1, type: 'HumanOverride', actor: MANAGER, provenance: 'human',
+          engagementYearId: engId,
+          seq: 1,
+          type: 'HumanOverride',
+          actor: MANAGER,
+          provenance: 'human',
           reason: 'accepted agent:x@1 proposal after checking the invoice',
           payload: { line: '300', after: 1, proposalSource: 'agent:x@1' },
         },

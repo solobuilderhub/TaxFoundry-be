@@ -105,17 +105,23 @@ export async function transmitAt1(params: TransmitAt1Params): Promise<TransmitAt
     );
   }
 
-  // Render the payload (also validates certification), then the final guards.
+  // The provenance guard first: nothing 'model' reaches the wire, and no lesser
+  // refusal (an incomplete jacket below) may be the reason given instead.
+  const fields = (computed.fields as { line: string; value: unknown; provenance: string }[]).map(
+    (f): ProvenancedField => ({ line: f.line, value: f.value, provenance: f.provenance }),
+  );
+  assertFiledProvenance(fields);
+
+  // Render the payload (also validates certification). `forFiling` — this IS
+  // the filing path: the frozen input and every mandatory-without-default field
+  // are enforced here, not only on the export screen's "for filing" render.
+  // Without it a transmission rendered as a draft.
   const { xml, payloadHash, transmitter } = await prepareAt1NetFile({
     engagementId: params.engagementId,
     orgId: params.orgId,
     certification: params.certification,
+    forFiling: true,
   });
-
-  const fields = (computed.fields as { line: string; value: unknown; provenance: string }[]).map(
-    (f): ProvenancedField => ({ line: f.line, value: f.value, provenance: f.provenance }),
-  );
-  assertFiledProvenance(fields); // nothing 'model' reaches the wire
 
   /*
    * The FILER's own details, against TRA's own rules, before anything leaves.
