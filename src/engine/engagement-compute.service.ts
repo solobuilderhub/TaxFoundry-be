@@ -21,12 +21,16 @@ import { appendFact } from '#shared/append-fact.js';
 import type { WithId } from '#shared/db.js';
 import { ProvenanceViolationError } from '#shared/provenance-guard.js';
 import { runReview } from '../review/review-generator.service.js';
-import { assembleProvincialInput } from './assemble-provincial-input.js';
+import {
+  assembleProvincialInput,
+  capDefaultedActiveBusinessIncome,
+} from './assemble-provincial-input.js';
 import { assembleT2Input } from './assemble-t2-input.js';
 import { type At1Identity, effectiveAt1Identity } from './at1-identity.js';
 import { runEngagementCompute } from './compute.js';
 import type { EngineComputeOutput } from './compute-types.js';
 import { applyPriorOpenings, resolvePriorYearOpenings } from './prior-year-openings.service.js';
+import type { ReturnInput } from './return-input-contract.js';
 import { assertReturnInputShape } from './return-input-validation.js';
 import type { ComputationSnapshot } from './snapshot.js';
 import { verifyT2Reproducible } from './t2-compute.js';
@@ -191,10 +195,15 @@ async function runEngine(p: {
   // Multi-year continuity: carry the prior tax year's closing loss/RDTOH pools
   // in as this year's opening balances (a preparer's explicit opening wins).
   const priors = await resolvePriorYearOpenings({ engagement, orgId: p.orgId });
-  const federalInput = applyAuthoritativeIdentity(
+  const identified = applyAuthoritativeIdentity(
     applyPriorOpenings(coerceEngineInput(assembledInput), priors),
     { isCcpc },
   );
+  // A defaulted T2 line 400 is capped at net income for tax — for the T2 and,
+  // through this same input, the AT1. See `capDefaultedActiveBusinessIncome`.
+  const federalInput = structuredReturn
+    ? capDefaultedActiveBusinessIncome(identified, structuredReturn as ReturnInput)
+    : identified;
 
   // A provincial engagement (Alberta AT1 / Québec CO-17) taxes the FEDERAL taxable
   // income allocated to the province, so compose its engine input from the federal

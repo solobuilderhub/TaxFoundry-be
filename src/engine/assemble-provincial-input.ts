@@ -155,33 +155,44 @@ function specialAllocationOf(
  * (see `ComposedFederalInput`'s own doc comment for why this stays `unknown` at the
  * parameter and gets one documented cast here, rather than a plain typed parameter).
  */
+/**
+ * T2 line 400 when the preparer did not state it.
+ *
+ * The federal assembly defaults it to BOOK net income, which ignores every tax
+ * adjustment: TRA Test Case 1 books 981,200 of income before 1,001,000 of CCA,
+ * a loss for tax, and Schedule 1 filed 981,200 of active business income for
+ * Alberta (§3.2.3.2: 001003 = fed 200400). Federally the same figure is the
+ * SBD's income base. Income from an active business cannot exceed the income
+ * the return actually has, so a defaulted figure is capped at net income for
+ * tax and floored at nil. A stated figure stands.
+ *
+ * Applied once, to the federal input both returns are computed from, so the
+ * T2 and the AT1 cannot state different active business income. Idempotent.
+ */
+export function capDefaultedActiveBusinessIncome<T>(federalEngineInput: T, ri: ReturnInput): T {
+  if (ri.sbd?.activeBusinessIncome != null) return federalEngineInput;
+  const composed = (federalEngineInput ?? {}) as unknown as ComposedFederalInput;
+  const { netIncomeForTax } = computeFederalT2(composed as unknown as FederalT2Input);
+  return {
+    ...composed,
+    activeBusinessIncome: Math.max(
+      0,
+      Math.min(num(composed.activeBusinessIncome), netIncomeForTax),
+    ),
+  } as unknown as T;
+}
+
 export function assembleProvincialInput(
   program: string,
   federalEngineInput: unknown,
   ri: ReturnInput,
   facts: { isCcpc: boolean },
 ): unknown {
-  const composed = (federalEngineInput ?? {}) as ComposedFederalInput;
-  const federal = computeFederalT2(composed as unknown as FederalT2Input);
-  /*
-   * T2 line 400 when the preparer did not state it. The federal assembly
-   * defaults it to BOOK net income, which ignores every tax adjustment: TRA
-   * Test Case 1 books 981,200 of income before 1,001,000 of CCA, a loss for
-   * tax, and Schedule 1 filed 981,200 of active business income for Alberta
-   * (§3.2.3.2: 001003 = fed 200400). Income from an active business cannot
-   * exceed the income the return actually has, so a defaulted figure is capped
-   * at net income for tax and floored at nil. A stated figure stands.
-   */
-  const fed: ComposedFederalInput =
-    ri.sbd?.activeBusinessIncome != null
-      ? composed
-      : {
-          ...composed,
-          activeBusinessIncome: Math.max(
-            0,
-            Math.min(num(composed.activeBusinessIncome), federal.netIncomeForTax),
-          ),
-        };
+  const fed = capDefaultedActiveBusinessIncome(
+    (federalEngineInput ?? {}) as ComposedFederalInput,
+    ri,
+  );
+  const federal = computeFederalT2(fed as unknown as FederalT2Input);
   const federalTaxableIncome = federal.taxableIncome;
   const activeBusinessIncome = num(fed.activeBusinessIncome);
   const period = fed.period;
